@@ -367,11 +367,12 @@ public sealed class SettingsWindow : Window
     {
         var root = NewPane("look", "外观", "决定设置窗口与岛的材质、配色和透明度。");
 
-        AddGroupLabel(root, "设置窗口材质");
+        AddGroupLabel(root, "设置窗口外观（只影响这个窗口）");
         var card = NewCard(root);
-        AddRadioRow(card, "材质", new[]
+        AddRadioRow(card, "外观", new[]
         {
-            ("亚克力", _matAcrylic), ("液态玻璃", _matGlass), ("原生 Windows", _matClassic),
+            ("亚克力 · 系统模糊", _matAcrylic), ("液态玻璃 · 同岛材质", _matGlass),
+            ("原生 Windows", _matClassic),
         }, "uimaterial");
         _matAcrylic.Checked += (_, _) => SetMaterial("acrylic");
         _matGlass.Checked += (_, _) => SetMaterial("glass");
@@ -382,7 +383,7 @@ public sealed class SettingsWindow : Window
         _materialHint.Margin = new Thickness(88, 6, 14, 8);
         root.Children.Add(_materialHint);
 
-        AddGroupLabel(root, "岛的主题");
+        AddGroupLabel(root, "岛（灵动岛本体）的材质与配色 —— 与上面的设置窗口互不影响");
         card = NewCard(root);
         AddRadioRow(card, "主题", new[]
         {
@@ -624,10 +625,9 @@ public sealed class SettingsWindow : Window
             _materialHint.Text = material switch
             {
                 "classic" => "纯色面板 + 方角 + 系统控件长相；最清晰、最省资源。",
-                "glass" => "系统合成器模糊 + 更薄色调 + 大圆角 + 落影（移动零延迟）。"
-                           + (effective == "solid" ? "（当前系统不支持系统模糊，退化为纯色）" : "")
-                           + "WPF 做不了边缘折射，这一档是近似；真折射只在岛那边。",
-                _ => "系统合成器模糊（DWM）+ 半透明面板 + 落影，窗口移动时模糊同步跟手。"
+                "glass" => "与岛同一套材质：清晰透明（不做模糊），背后内容直接透出来。"
+                           + "WPF 做不了边缘折射，这是它和岛上材质的唯一差别。",
+                _ => "系统合成器模糊（DWM）——桌面被糊在面板后面，窗口移动时跟手。"
                      + (effective == "solid" ? "（当前系统不支持系统模糊，退化为纯色）" : ""),
             };
         }

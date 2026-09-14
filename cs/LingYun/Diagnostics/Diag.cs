@@ -2050,20 +2050,21 @@ internal static class Diag
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "glass" }).UiMaterial == "glass"
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "classic" }).UiMaterial == "classic"
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "neon" }).UiMaterial == "acrylic");
-            Check("界面材质：Win10 1803+ 用系统合成器模糊（DWM，移动零延迟）",
+            Check("界面材质：亚克力走系统模糊（DWM，移动零延迟）",
                 Platform.WindowMaterial.ResolveBackdrop(17134, "acrylic") == "dwm-acrylic"
-                && Platform.WindowMaterial.ResolveBackdrop(19045, "glass") == "dwm-acrylic"
                 && Platform.WindowMaterial.ResolveBackdrop(26100, "acrylic") == "dwm-acrylic"
                     // 模糊必须交给 DWM：自己抓屏 + WPF BlurEffect 观感能对，
                     // 但窗口一移动就是"卡顿式"的（抓屏 1Hz + CPU 模糊），这条路已废弃
                 );
+            Check("界面材质：液态玻璃与岛同款（清晰透明，不做模糊）",
+                Platform.WindowMaterial.ResolveBackdrop(26100, "glass") == "translucent"
+                && Platform.WindowMaterial.ResolveBackdrop(17134, "glass") == "translucent");
             Check("界面材质：老系统与经典档退回纯色（不假装有模糊）",
                 Platform.WindowMaterial.ResolveBackdrop(10240, "acrylic") == "solid"
                 && Platform.WindowMaterial.ResolveBackdrop(26100, "classic") == "solid");
-            Check("界面材质：玻璃比亚克力更透，经典档不透明",
-                (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF)
-                    < (Platform.WindowMaterial.TintArgb("acrylic", false) >> 24 & 0xFF)
-                && (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF) is > 0x50 and < 0xC0
+            Check("界面材质：玻璃/亚克力都带 alpha（真透），经典档不透明",
+                (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF) is > 0x80 and < 0xF0
+                && (Platform.WindowMaterial.TintArgb("acrylic", false) >> 24 & 0xFF) is > 0x60 and < 0xF0
                 && (Platform.WindowMaterial.TintArgb("classic", false) >> 24 & 0xFF) == 0xFF);
             Check("媒体页标题：短标题单行、长标题两行且第二行带省略号",
                 NativeIslandApp.WrapTwoLines("夜曲", 300, 18, SKFontStyleWeight.SemiBold).Length == 1

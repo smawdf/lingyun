@@ -74,6 +74,9 @@ internal static class WindowMaterial
     internal static string ResolveBackdrop(int osBuild, string material)
     {
         if (material == Classic) return "solid";
+        // 液态玻璃这一档刻意**不做**系统模糊：它要和岛的材质一模一样（清晰透明），
+        // 模糊只有亚克力才用。两者是"两种观感"，不是同一套东西的浓淡。
+        if (material == Glass) return "translucent";
         return osBuild >= BuildAcrylicBlur ? "dwm-acrylic" : "solid";
     }
 
@@ -81,8 +84,8 @@ internal static class WindowMaterial
     internal static int TintArgb(string material, bool dark)
         => material switch
         {
-            // 玻璃要能明显透出背景（原型就是这观感）；亚克力比它实一点，和 Windows 自己的一致
-            Glass => dark ? unchecked((int)0x70101218) : unchecked((int)0x5EFFFFFF),
+            // 液态玻璃 = 岛上那套半透明材质（不模糊、背后内容直接透出来）；亚克力走系统模糊，色调可薄一些
+            Glass => dark ? unchecked((int)0xA6121418) : unchecked((int)0xA6FFFFFF),
             Classic => dark ? unchecked((int)0xFF202020) : unchecked((int)0xFFF0F0F0),
             _ => dark ? unchecked((int)0x861A1B20) : unchecked((int)0x7AF2F4F8),   // acrylic
         };
@@ -161,9 +164,9 @@ internal static class WindowMaterial
                 | (uint)((tint & 0xFF) << 16)));        // B → R
             var accent = new ACCENTPOLICY
             {
-                AccentState = material == Classic ? ACCENT_DISABLED : ACCENT_ENABLE_ACRYLICBLURBEHIND,
+                AccentState = material == Acrylic ? ACCENT_ENABLE_ACRYLICBLURBEHIND : ACCENT_DISABLED,
                 AccentFlags = 2,
-                GradientColor = material == Classic ? 0 : abgr,
+                GradientColor = material == Acrylic ? abgr : 0,
                 AnimationId = 0,
             };
             int size = Marshal.SizeOf<ACCENTPOLICY>();
