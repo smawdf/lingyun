@@ -25,7 +25,8 @@
 | 通知点击唤醒 | `Services/AppActivatorService.cs` | 三级激活：WinRT 包激活 → COM 激活管理器 → 按进程名/标题前台化；派生自 NotchPeninsula `appactivator.cs`（Apache-2.0） |
 | 快捷动作 | `Services/QuickActions.cs` | 6 个动作；睡眠/重启/关机标记 `Destructive`，**只能长按 900ms 确认** |
 | 灵动岛（运行时） | `Ui/NativeIslandApp.cs` | 形变 / 命中 / 媒体 / alert / 六页面板 / 通知条 / 组合模式 / 卡拉OK，全自绘 |
-| 配色 | `Ui/IslandPalette.cs` | 深/浅/液态玻璃三套（纯黑 `#000000` / 暖白 `#f5f6f8` / 浅色半透明材质）+ `theme=system` 跟随系统 + 背景透明度（只压背景类 alpha）+ `Over` 合成后 WCAG 对比度自检；所有绘制统一取色 |
+| 配色 | `Ui/IslandPalette.cs` | 深/浅/液态玻璃（浅色+深色两套）四套材质 + `theme=system` 跟随系统 + 背景透明度（只压背景类 alpha）+ 液态玻璃自适应（`PreferDarkGlass`：先保对比度、再保与背景的分离度，带迟滞）+ `Over`/`Composite` 合成后 WCAG 对比度自检；所有绘制统一取色 |
+| 背景采样（自适应用） | `Services/BackdropSampler.cs` | BitBlt 进复用 DIB + 直接读内存算平均色/亮度/最亮分区（实测 4ms/次）；**采岛周围一圈并剔除岛自身**——DWM 下 BitBlt 会把自己的分层窗一起采进来 |
 
 > `IslandWindow.xaml(.cs)`、`Ui/ExpandedPages.cs`、`Ui/QuickFan.cs` 是早期 WPF 版实现，
 > **保留作对照/后续 UI 扩展，当前不参与运行**（`QuickFan` 的悬停扇出模型已被「快捷」页取代）。
@@ -41,15 +42,18 @@
   睡眠 / 重启 / 关机带红环预警，**必须按住 0.9 秒**（红色进度弧走满）且松手时指针仍在按钮上才触发，
   长按中指针滑出按钮即取消。资源管理器 / 设置 / 任务管理器三个动作已被移除。
 
-外观契约：主题四选一（深 / 浅 / 跟随系统 / **液态玻璃**），液态玻璃恒浅色、走应用内半透明材质
-（不是桌面级 Acrylic——岛是 `UpdateLayeredWindow` 分层窗，拿不到桌面像素）；背景透明度 40–100% 只压
-背景类 alpha（主体/卡片/轨道/阴影/边框/高光），文字与强调色不变，滑杆旁另给三档预设。
+外观契约：主题四选一（深 / 浅 / 跟随系统 / **液态玻璃**），液态玻璃默认浅色、材质在 Skia 里画
+（不是桌面级 Acrylic——岛是 `UpdateLayeredWindow` 分层窗，拿不到桌面像素）；**液态玻璃自适应**
+（`glass_adaptive`，默认开）每秒抓一次岛周围桌面的亮度，在浅色玻璃（深字）与深色玻璃（白字）之间
+自动切换：先保证文字对比度达标，再保证岛与背景分得开（白底上的白玻璃会糊成一片），带迟滞不来回闪；
+背景透明度 40–100% 只压背景类 alpha（主体/卡片/轨道/阴影/边框/高光），文字与强调色不变。
 
 这套契约由 `lingyun.exe --self-test` 断言守护（危险动作单击不执行、按不够时长不执行、
 长按中移开不执行、快捷页顶行不含危险动作、频谱 80Hz 正弦 → band0 主导、多来源选源回落顺序、
 B站站标 Always 策略、通知宽度/抢占规则、组合模式槽位与自动长度、卡拉OK进度与延迟补偿、
-性能采样、性能页网速开关、主题解析与不透明度、液态玻璃恒浅色与材质 alpha 单调、透明底离屏 alpha、
-自动隐藏谓词等，共 152 条）。
+性能采样、性能页网速开关、主题解析与不透明度、液态玻璃恒浅色与材质 alpha 单调、
+液态玻璃自适应（深/浅背景选材质、迟滞、白底翻深色、合成色）、透明底离屏 alpha 与深色材质白字、
+自动隐藏谓词等，共 166 条）。
 
 ## 构建 / 运行
 
@@ -73,9 +77,10 @@ Copy-Item -Force publish\lingyun.exe ..\..\lingyun.exe
 ## 诊断
 
 ```powershell
-lingyun.exe --self-test          # 152 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
+lingyun.exe --self-test          # 166 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质/自适应与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
 lingyun.exe --self-test --diag-quick   # 自测 + 快捷页契约报告（写 灵云-diag.txt）
 lingyun.exe --dump-frames        # 离屏渲染各状态帧（写 灵云-diag/*.png）；含 -glass 液态玻璃帧
+lingyun.exe --backdrop-probe 20  # 真机验证自适应输入：采到的是背景还是岛自己 + 单次耗时 + 决策预览
 lingyun.exe --spectrum-probe 5   # 音频链路自检：频谱捕获峰值 + SMTC 会话状态 + 音量设备 + 天气定位来源
 lingyun.exe --marquee-probe      # 跑马灯运动验证（两次渲染比较标题带重心）
 lingyun.exe --toast-probe        # 通知权限 / 高水位 Id / 当前通知（AUMID、标题）

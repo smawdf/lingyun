@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>灵云 · 液态玻璃 (Liquid Glass) 对照 demo</title>
+<style>
+/* =====================================================================
+   灵云 液态玻璃 demo —— 独立文件，不依赖网络、不碰项目代码。
+   目的：把「真液态玻璃」和「灵云现在展开页的半透明材质」并排放在一起，
+        差在哪一眼就能看出来（边缘折射/色散/高光，而不是"半透明面板"）。
+
+   技法来源（均为 MIT / 公开实现）：
+     - deepika-builds/liquid-glass：位移贴图 + 三通道错位色散 + sRGB 修正
+       https://github.com/deepika-builds/liquid-glass
+     - shuding/liquid-glass：roundedRectSDF 位移贴图
+       https://github.com/shuding/liquid-glass
+     - 参考 Aave《Building glass for the web》与 rizroze/liquid-glass 的材质配方
+   ===================================================================== */
+
+:root {
+  --ink: #f2f4f8;
+  --dim: #9aa3b2;
+  --page-bg: #0b0d12;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--page-bg);
+  color: var(--ink);
+  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* ---------- 背景：先用 canvas 画一张有明确边界的"照片"，折射才看得见 ---------- */
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* 细密内容层（网格 + 文字）：玻璃经过时"字被掰弯"最能说明折射 */
+#detail {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .25s ease;
+}
+#detail.on { opacity: 1; }
+#detail .grid {
+  position: absolute; inset: -20%;
+  background-image:
+    linear-gradient(rgba(255,255,255,.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.22) 1px, transparent 1px);
+  background-size: 34px 34px, 34px 34px;
+  animation: drift 24s linear infinite;
+}
+#detail .words {
+  position: absolute; inset: -10%;
+  font: 600 15px/26px "Segoe UI", system-ui, sans-serif;
+  letter-spacing: .18em;
+  color: rgba(255,255,255,.30);
+  word-spacing: 14px;
+  animation: drift 40s linear infinite reverse;
+}
+@keyframes drift { from { transform: translate3d(0,0,0); } to { transform: translate3d(-160px,-120px,0); } }
+
+/* ---------- 岛体：位置与尺寸完全照灵云的规格（紧凑 240×52 / 媒体 300×52 / 展开 460×320） ---------- */
+#island {
+  position: fixed; left: 50%; top: 8px;
+  transform: translateX(-50%);
+  transform-origin: 50% 0;
+  cursor: grab;
+  user-select: none;
+  z-index: 10;
+}
+#island.dragging { cursor: grabbing; }
+
+.glass-surface {
+  position: relative;
+  border-radius: 26px;
+  overflow: hidden;
+  transition: width .28s cubic-bezier(.16,.84,.44,1), height .28s cubic-bezier(.16,.84,.44,1);
+}
+
+/* =====================================================================
+   两种模式：mode-glass = 真液态玻璃（折射）；mode-flat = 灵云当前实现
+   ===================================================================== */
+
+/* —— 灵云当前实现：半透明填充 + 1px 边框 + 顶部内高光，没有模糊、没有折射 —— */
+.mode-flat .glass-surface {
+  backdrop-filter: none;
+  background: var(--flat-fill);
+  box-shadow:
+    0 14px 26px rgba(10, 16, 28, .30),
+    inset 0 0 0 1px var(--flat-border);
+}
+.mode-flat .glare { display: none; }
+
+/* —— 真液态玻璃：折射由 JS 装 backdrop-filter: url(#filter)，这里只做"材质妆" —— */
+.mode-glass .glass-surface {
+  background: var(--tint);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, .45),               /* 落影 */
+    inset 0 1px 1px rgba(255,255,255,.55),        /* 顶部镜面高光 */
+    inset 0 -10px 24px rgba(255,255,255,.07),     /* 底部内反射 */
+    inset 0 0 0 1px rgba(255,255,255,.16);        /* 1px 玻璃边 */
+}
+.glare {
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(115deg, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 32%),
+    radial-gradient(120% 80% at 78% -10%, rgba(255,255,255,.34), rgba(255,255,255,0) 55%);
+  mix-blend-mode: screen;
+}
+
+/* 主题（浅色玻璃 / 深色玻璃），数值对齐灵云调色板 */
+/* 主题 = 材质（浅色玻璃 / 深色玻璃）；字色由「材质合成亮度」自动决定，见 JS */
+:root {
+  --flat-fill: rgba(255,255,255,.90);
+  --flat-border: rgba(255,255,255,.74);
+  --tint: linear-gradient(180deg, rgba(255,255,255,.82), rgba(242,246,252,.72));
+  --card-fill: rgba(255,255,255,.42);
+}
+.theme-dark {
+  --flat-fill: rgba(0,0,0,.92);
+  --flat-border: rgba(255,255,255,.10);
+  --tint: linear-gradient(180deg, rgba(18,20,26,.82), rgba(8,9,12,.72));
+  --card-fill: rgba(255,255,255,.10);
+}
+/* 字色两套：浅字 / 深字。跟着材质走，不跟壁纸走。 */
+body.text-dark { --tx: #101317; --tx-sub: #3f444c; --tx-dim: #5b6069; }
+body.text-light { --tx: #f6f8fc; --tx-sub: #c9cfd8; --tx-dim: #98a0ab; }
+/* 手动指定字色（用来试「白字白底」这种搭配），声明在后面所以能盖掉上面的自动结果 */
+body.ink-white { --tx: #ffffff; --tx-sub: rgba(255,255,255,.90); --tx-dim: rgba(255,255,255,.76); }
+body.ink-dark { --tx: #101317; --tx-sub: #3f444c; --tx-dim: #5b6069; }
+
+/* 补救一：给白字加深色阴影（Apple 在浅色材质上放白字时就是这么兜的） */
+body.fix-shadow .capsule,
+body.fix-shadow .panel { text-shadow: 0 1px 3px rgba(0,0,0,.80), 0 0 14px rgba(0,0,0,.60); }
+
+/* 补救二：先给玻璃压一层暗底（scrim），白字就落在深色上 */
+body.fix-scrim.mode-glass .glass-surface {
+  background:
+    linear-gradient(180deg, rgba(0,0,0,.40), rgba(0,0,0,.28)),
+    var(--tint);
+}
+
+/* ---------- 岛内内容（照灵云的排版做） ---------- */
+.capsule {
+  display: flex; align-items: center;
+  gap: 14px;
+  width: 100%; height: 100%;
+  padding: 0 16px;
+  color: var(--tx);
+}
+.capsule .clock { font-size: 25px; font-weight: 600; letter-spacing: .5px; font-variant-numeric: tabular-nums; }
+.capsule .stack { font-size: 10px; line-height: 13px; color: var(--tx-sub); }
+.capsule .hw { display: flex; flex-direction: column; gap: 4px; font-size: 10px; color: var(--tx-sub); }
+.capsule .hw .row { display: flex; align-items: center; gap: 5px; }
+.capsule .bar { width: 26px; height: 4px; border-radius: 2px; background: rgba(128,140,160,.42); overflow: hidden; }
+.capsule .bar i { display: block; height: 100%; border-radius: 2px; background: #0a72dc; }
+.capsule .hw .pct { font-variant-numeric: tabular-nums; }
+.capsule .media { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.capsule .cover {
+  width: 32px; height: 32px; border-radius: 8px; flex: 0 0 auto;
+  background: linear-gradient(135deg, #7c4dff, #ff5c8a 55%, #ffb347);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.35);
+}
+.capsule .title { font-size: 12.5px; font-weight: 600; color: var(--tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.capsule .spectrum { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.capsule .spectrum i { width: 2.4px; border-radius: 2px; background: #0a72dc; display: block; }
+
+/* 展开面板 */
+.panel { display: none; width: 100%; height: 100%; padding: 14px 18px 16px; color: var(--tx); }
+#island.expanded .capsule { display: none; }
+#island.expanded .panel { display: block; }
+
+.tabs { display: flex; gap: 4px; font-size: 12.5px; color: var(--tx-dim); margin-bottom: 14px; }
+.tabs span { padding: 4px 10px; border-radius: 8px; }
+.tabs span.on { color: #0a72dc; background: rgba(10,114,220,.16); font-weight: 600; }
+.panel h3 { margin: 0 0 4px; font-size: 15px; }
+.panel .sub { font-size: 10.5px; color: var(--tx-dim); margin-bottom: 12px; }
+.cards { display: flex; gap: 10px; }
+.card {
+  border-radius: 14px; padding: 12px;
+  background: var(--card-fill);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.14), inset 0 1px 1px rgba(255,255,255,.28);
+  backdrop-filter: blur(2px);
+}
+:root { --card-fill: rgba(255,255,255,.42); }
+.theme-dark { --card-fill: rgba(255,255,255,.10); }
+.card .big { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.card .cap { font-size: 10px; color: var(--tx-dim); margin-top: 6px; }
+.seg { display: flex; gap: 6px; margin-top: 8px; }
+.seg b {
+  font-size: 11px; font-weight: 500; padding: 4px 9px; border-radius: 7px;
+  background: rgba(128,140,160,.24); color: var(--tx-sub);
+}
+.seg b.on { background: rgba(10,114,220,.20); color: #0a72dc; font-weight: 600; }
+.week { display: flex; gap: 8px; margin-top: 12px; }
+.week i {
+  width: 26px; height: 26px; border-radius: 8px; font-size: 11px; font-style: normal;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(128,140,160,.22); color: var(--tx-sub);
+}
+.week i.on { background: rgba(10,114,220,.22); color: #0a72dc; font-weight: 600; }
+.banner {
+  margin-top: 12px; border-radius: 11px; padding: 8px 12px; font-size: 11.5px;
+  color: #0a72dc;
+  background: linear-gradient(90deg, rgba(10,114,220,.22), rgba(10,114,220,0) 78%);
+  box-shadow: inset 0 0 0 1px rgba(10,114,220,.26);
+}
+
+/* ---------- 控制面板 ---------- */
+#ui {
+  position: fixed; right: 16px; bottom: 16px; width: 306px;
+  padding: 14px 14px 12px;
+  border-radius: 16px;
+  background: rgba(14,16,22,.72);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 18px 40px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.10);
+  font-size: 12px; color: #dfe4ec;
+  z-index: 20;
+}
+#ui h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+#ui .group { margin-bottom: 11px; }
+#ui .label { display: flex; justify-content: space-between; color: #9aa3b2; margin-bottom: 5px; }
+#ui .label b { color: #cfd6e2; font-weight: 500; font-variant-numeric: tabular-nums; }
+#ui input[type=range] { width: 100%; accent-color: #4aa3ff; }
+#ui .row { display: flex; gap: 6px; flex-wrap: wrap; }
+#ui button {
+  font: inherit; font-size: 11.5px; color: #dfe4ec; cursor: pointer;
+  padding: 5px 10px; border-radius: 8px; border: 0;
+  background: rgba(255,255,255,.10);
+}
+#ui button.on { background: #2f6fd0; color: #fff; }
+#ui .hint { color: #7f8896; font-size: 11px; line-height: 1.5; margin-top: 8px; }
+#ui code { color: #9fd0ff; }
+</style>
+</head>
+<body class="mode-glass theme-light">
+
+<canvas id="scene"></canvas>
+<div id="detail">
+  <div class="grid"></div>
+  <div class="words">
+    灵云 液态玻璃 liquid glass 折射 refraction 位移贴图 displacement map 高光 specular
+    计划 性能 天气 日程 日历 快捷 — 22:17 — CPU 12% 内存 48% — 夜曲 · 周杰伦 —
+    the quick brown fox jumps over the lazy dog — 0123456789 —
+  </div>
+</div>
+
+<!-- 岛：紧凑态 = 时间 + 硬件 + 媒体（照灵云组合模式）；点一下展开计划页 -->
+<div id="island" title="点击展开 / 拖动移动">
+  <div class="glass-surface" id="surface" style="width:420px;height:52px">
+    <div class="capsule">
+      <div class="clock">22:17</div>
+      <div class="stack">9月14日<br>周一</div>
+      <div class="hw">
+        <div class="row"><span>CPU</span><span class="bar"><i style="width:12%"></i></span><span class="pct">12%</span></div>
+        <div class="row"><span>内存</span><span class="bar"><i style="width:48%;background:#59606b"></i></span><span class="pct">48%</span></div>
+      </div>
+      <div class="media">
+        <div class="cover"></div>
+        <div class="title">夜曲 · 周杰伦</div>
+      </div>
+      <div class="spectrum">
+        <i style="height:7px"></i><i style="height:13px"></i><i style="height:18px"></i>
+        <i style="height:10px"></i><i style="height:15px"></i>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="tabs">
+        <span class="on">◷ 计划</span><span>脉搏 性能</span><span>天气</span>
+        <span>日程</span><span>日历</span><span>快捷</span>
+      </div>
+      <h3>定时计划 <span style="color:#14a05a">● 已启用</span></h3>
+      <div class="sub">岛设置 → 主题 → 液态玻璃；展开面板是这次要对比的地方</div>
+      <div class="cards">
+        <div class="card" style="width:158px">
+          <div class="big">23:00</div>
+          <div class="cap">执行时刻 · 点击修改</div>
+        </div>
+        <div class="card" style="flex:1">
+          <div class="cap" style="margin:0 0 6px">到点动作</div>
+          <div class="seg"><b class="on">关机</b><b>锁屏</b><b>息屏</b><b>暂停媒体</b></div>
+          <div class="week"><i class="on">一</i><i>二</i><i class="on">三</i><i>四</i><i class="on">五</i><i>六</i><i>日</i></div>
+        </div>
+      </div>
+      <div class="banner">⌁ 下次执行：今天 23:00 · 还有 43 分钟</div>
+    </div>
+
+    <div class="glare"></div>
+  </div>
+</div>
+
+<div id="ui">
+  <h4>液态玻璃对照</h4>
+
+  <div class="group">
+    <div class="label">实现方式</div>
+    <div class="row">
+      <button id="mGlass" class="on">液态玻璃（真折射）</button>
+      <button id="mFlat">灵云当前实现</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="label">折射强度 scale <b id="vScale">-150</b></div>
+    <input type="range" id="scale" min="0" max="220" value="150">
+  </div>
+
+  <div class="group">
+    <div class="label">边缘色散 chroma <b id="vChroma">8</b></div>
+    <input type="range" id="chroma" min="0" max="16" value="8">
+  </div>
+
+  <div class="group">
+    <div class="label">内部模糊 blur <b id="vBlur">2</b> px</div>
+    <input type="range" id="blur" min="0" max="16" value="2">
+  </div>
+
+  <div class="group">
+    <div class="label">折射带宽度 border <b id="vBorder">0.12</b></div>
+    <input type="range" id="border" min="2" max="24" value="12">
+  </div>
+
+  <div class="group">
+    <div class="label">玻璃厚度（不透明度） <b id="vThick">82%</b></div>
+    <input type="range" id="thick" min="0" max="100" value="82">
+    <div class="hint" id="readout" style="margin-top:4px"></div>
+  </div>
+
+  <div class="group">
+    <div class="label">字色（默认跟材质自动）</div>
+    <div class="row">
+      <button id="inkAuto" class="on">自动</button>
+      <button id="inkWhite">强制白字</button>
+      <button id="inkDark">强制深字</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button id="fixShadow">补救：文字阴影</button>
+      <button id="fixScrim">补救：压暗底</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="label">背景内容</div>
+    <div class="row">
+      <button id="bgPhoto">照片</button>
+      <button id="bgDetail" class="on">细网格 + 文字</button>
+      <button id="bgBoth">两者叠加</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="label">玻璃底色</div>
+    <div class="row">
+      <button id="thLight" class="on">浅色玻璃</button>
+      <button id="thDark">深色玻璃</button>
+    </div>
+  </div>
+
+  <div class="hint">
+    岛可拖动、点击可展开；折射只在 Chromium 内核（Chrome / Edge）生效，
+    Safari / Firefox 会退化成普通毛玻璃。<br>
+    我们的岛是 <code>UpdateLayeredWindow</code> 分层窗，背后没有"可采样的页面"，
+    所以真折射要先抓屏再在 Skia 里做同样的位移。
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   液态玻璃光学模块（改编自 deepika-builds/liquid-glass, MIT）
+   ---------------------------------------------------------------------
+   1) 位移贴图：横向红渐变编码 X 位移、纵向蓝渐变编码 Y（difference 叠加），
+      再盖一块"模糊 + 内缩的 50% 灰圆角矩形"把内部中和掉，
+      于是折射只发生在边缘一圈，圈内曲率由模糊半径控制。
+   2) SVG 滤镜：feImage 载入贴图 → 三遍 feDisplacementMap（scale 逐级错开），
+      每遍用 feColorMatrix 只留一个通道 → feBlend screen 合起来 = 边缘色散。
+   3) 用 backdrop-filter: url(#id) 应用，所以折射的是真实 DOM 内容。
+   ===================================================================== */
+(function (global) {
+  "use strict";
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  let uid = 0;
+  let defs = null;
+
+  function ensureDefs() {
+    if (defs) return defs;
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("width", "0");
+    svg.setAttribute("height", "0");
+    svg.setAttribute("aria-hidden", "true");
+    svg.style.position = "absolute";
+    defs = document.createElementNS(SVG_NS, "defs");
+    svg.appendChild(defs);
+    document.body.appendChild(svg);
+    return defs;
+  }
+
+  function makeMap(w, h, radius, border, mapBlur) {
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+
+    const gx = ctx.createLinearGradient(0, 0, w, 0);
+    gx.addColorStop(0, "rgb(0,0,0)");
+    gx.addColorStop(1, "rgb(255,0,0)");
+    ctx.fillStyle = gx;
+    ctx.fillRect(0, 0, w, h);
+
+    const gy = ctx.createLinearGradient(0, 0, 0, h);
+    gy.addColorStop(0, "rgb(0,0,0)");
+    gy.addColorStop(1, "rgb(0,0,255)");
+    ctx.globalCompositeOperation = "difference";
+    ctx.fillStyle = gy;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.globalCompositeOperation = "source-over";
+    const inset = border * Math.min(w, h);
+    ctx.filter = "blur(" + mapBlur + "px)";
+    ctx.fillStyle = "rgba(128,128,128,0.93)";
+    ctx.beginPath();
+    ctx.roundRect(inset, inset, w - inset * 2, h - inset * 2, Math.max(radius - inset, 2));
+    ctx.fill();
+    ctx.filter = "none";
+    return canvas.toDataURL();
+  }
+
+  function buildFilter(id, scales) {
+    const filter = document.createElementNS(SVG_NS, "filter");
+    filter.setAttribute("id", id);
+    filter.setAttribute("x", "0");
+    filter.setAttribute("y", "0");
+    filter.setAttribute("width", "100%");
+    filter.setAttribute("height", "100%");
+    // 关键：SVG 滤镜默认 linearRGB，会把贴图的中性灰 128 重映射掉，
+    // 导致整个面板被恒定位移（看起来像糊了一层）。
+    filter.setAttribute("color-interpolation-filters", "sRGB");
+
+    const feImage = document.createElementNS(SVG_NS, "feImage");
+    feImage.setAttribute("x", "0");
+    feImage.setAttribute("y", "0");
+    feImage.setAttribute("result", "map");
+    feImage.setAttribute("preserveAspectRatio", "none");
+    filter.appendChild(feImage);
+
+    const keep = [
+      "1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0",
+      "0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0",
+      "0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0",
+    ];
+    const channels = [];
+    for (let i = 0; i < 3; i++) {
+      const disp = document.createElementNS(SVG_NS, "feDisplacementMap");
+      disp.setAttribute("in", "SourceGraphic");
+      disp.setAttribute("in2", "map");
+      disp.setAttribute("scale", scales[i]);
+      disp.setAttribute("xChannelSelector", "R");
+      disp.setAttribute("yChannelSelector", "B");
+      disp.setAttribute("result", "d" + i);
+      filter.appendChild(disp);
+
+      const cm = document.createElementNS(SVG_NS, "feColorMatrix");
+      cm.setAttribute("in", "d" + i);
+      cm.setAttribute("type", "matrix");
+      cm.setAttribute("values", keep[i]);
+      cm.setAttribute("result", "c" + i);
+      filter.appendChild(cm);
+      channels.push("c" + i);
+    }
+    const blend1 = document.createElementNS(SVG_NS, "feBlend");
+    blend1.setAttribute("in", channels[0]);
+    blend1.setAttribute("in2", channels[1]);
+    blend1.setAttribute("mode", "screen");
+    blend1.setAttribute("result", "c01");
+    filter.appendChild(blend1);
+    const blend2 = document.createElementNS(SVG_NS, "feBlend");
+    blend2.setAttribute("in", "c01");
+    blend2.setAttribute("in2", channels[2]);
+    blend2.setAttribute("mode", "screen");
+    filter.appendChild(blend2);
+
+    ensureDefs().appendChild(filter);
+    return { filter: filter, feImage: feImage };
+  }
+
+  function supports() {
+    if (!CSS.supports("backdrop-filter", "url(#lg)")) return false;
+    const ua = navigator.userAgent;
+    if (/Firefox/.test(ua)) return false;
+    if (/Safari/.test(ua) && !/Chrome|Chromium|Edg/.test(ua)) return false;
+    return true;
+  }
+
+  const supported = supports();
+
+  /**
+   * @param {Element} el  目标元素（会读它的 border-radius）
+   * @param {Object} opts scale/chroma/border/mapBlur/blur/saturate
+   */
+  function liquidGlass(el, opts) {
+    const o = Object.assign(
+      { scale: -112, chroma: 6, border: 0.07, mapBlur: 12, blur: 3, saturate: 1.5 },
+      opts || {}
+    );
+    if (!supported) {
+      el.style.backdropFilter = "blur(" + o.blur * 4 + "px) saturate(" + o.saturate + ")";
+      el.setAttribute("data-lg", "fallback");
+      return { supported: false, refresh: function () { } };
+    }
+    const id = "lg-filter-" + (++uid);
+    const parts = buildFilter(id, [o.scale, o.scale + o.chroma, o.scale + 2 * o.chroma]);
+
+    function refresh() {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      if (!w || !h) return;
+      const radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+      parts.feImage.setAttribute("href", makeMap(w, h, radius, o.border, o.mapBlur));
+      parts.feImage.setAttribute("width", w);
+      parts.feImage.setAttribute("height", h);
+      el.style.backdropFilter =
+        "url(#" + id + ") blur(" + o.blur + "px) saturate(" + o.saturate + ")";
+    }
+    refresh();
+    if (global.ResizeObserver) new ResizeObserver(refresh).observe(el);
+    return { supported: true, refresh: refresh };
+  }
+
+  global.liquidGlass = liquidGlass;
+  global.liquidGlassSupported = supported;
+})(window);
+
+/* =====================================================================
+   背景：canvas 画一张有明确轮廓的"照片"（山脊/云/树），边缘折射才看得出来
+   ===================================================================== */
+(function drawScene() {
+  const canvas = document.getElementById("scene");
+  const ctx = canvas.getContext("2d");
+  function paint() {
+    const w = canvas.width = innerWidth, h = canvas.height = innerHeight;
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, "#1b2a4a");
+    sky.addColorStop(.42, "#5b4a72");
+    sky.addColorStop(.62, "#c4715f");
+    sky.addColorStop(1, "#26202c");
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    // 太阳 + 光晕
+    const sunX = w * .7, sunY = h * .46, sunR = Math.min(w, h) * .055;
+    const glow = ctx.createRadialGradient(sunX, sunY, sunR * .2, sunX, sunY, sunR * 5);
+    glow.addColorStop(0, "rgba(255,214,160,.85)");
+    glow.addColorStop(1, "rgba(255,180,120,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#ffe6bc";
+    ctx.beginPath();
+    ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 云带（横向条纹，折射时会明显"掰弯"）
+    ctx.globalAlpha = .5;
+    for (let i = 0; i < 14; i++) {
+      const y = h * .12 + i * h * .022;
+      const ww = w * (.3 + Math.random() * .7);
+      const x = Math.random() * w - ww * .3;
+      const c = ctx.createLinearGradient(x, 0, x + ww, 0);
+      c.addColorStop(0, "rgba(255,255,255,0)");
+      c.addColorStop(.5, "rgba(255,236,214,.55)");
+      c.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = c;
+      ctx.fillRect(x, y, ww, h * .012);
+    }
+    ctx.globalAlpha = 1;
+
+    // 三层山脊
+    const ridges = [
+      { base: .60, amp: .10, color: "#2b3a52", seed: 3 },
+      { base: .70, amp: .08, color: "#1e2a3d", seed: 7 },
+      { base: .82, amp: .06, color: "#141c2a", seed: 11 },
+    ];
+    for (const r of ridges) {
+      ctx.fillStyle = r.color;
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      for (let x = 0; x <= w; x += 8) {
+        const t = x / w;
+        const y = h * r.base
+          - Math.sin(t * 9 + r.seed) * h * r.amp * .5
+          - Math.sin(t * 23 + r.seed * 2.3) * h * r.amp * .22
+          - Math.sin(t * 47 + r.seed * 3.7) * h * r.amp * .08;
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(w, h);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // 前景树剪影（细枝 = 高频细节，最能体现折射）
+    ctx.strokeStyle = "#0b0f16";
+    ctx.lineWidth = 2.4;
+    for (let i = 0; i < 7; i++) {
+      const bx = w * (.06 + i * .14), by = h + 10;
+      const top = h * (.30 + (i % 3) * .07);
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.quadraticCurveTo(bx + 18 * Math.sin(i), (by + top) / 2, bx + 34 * Math.sin(i * 2), top);
+      ctx.stroke();
+      for (let b = 0; b < 9; b++) {
+        const t = b / 9;
+        const px = bx + (34 * Math.sin(i * 2)) * t + 18 * Math.sin(i) * t * (1 - t) * 2;
+        const py = by + (top - by) * t;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.quadraticCurveTo(px + 42 * (b % 2 ? 1 : -1), py - 16, px + 66 * (b % 2 ? 1 : -1), py - 30);
+        ctx.stroke();
+      }
+    }
+  }
+  paint();
+  addEventListener("resize", paint);
+})();
+
+/* =====================================================================
+   Demo 接线：模式切换、参数滑杆、展开/拖动、背景切换
+   ===================================================================== */
+(function () {
+  const island = document.getElementById("island");
+  const surface = document.getElementById("surface");
+  const body = document.body;
+
+  const opts = { scale: -150, chroma: 8, border: 0.12, mapBlur: 16, blur: 2, saturate: 1.5 };
+  let glass = null;
+
+  // ---- 字色跟着材质走：算出材质压在中灰（=未知壁纸）上的合成亮度，
+  //      再看深字/白字哪个对比度高。材质越薄，白字越占优——但那是"深色玻璃"的做法。
+  const relLum = (r, g, b) => {
+    const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  const LUM_DARK_INK = relLum(16, 19, 23);      // #101317
+  const LUM_LIGHT_INK = relLum(246, 248, 252);  // #f6f8fc
+
+  const thickEl = document.getElementById("thick");
+  const thickOut = document.getElementById("vThick");
+  const readout = document.getElementById("readout");
+  let flatMode = false;
+
+  function applyMaterial() {
+    const a = 0.06 + 0.90 * (+thickEl.value / 100);
+    thickOut.textContent = Math.round(a * 100) + "%";
+    const darkGlass = body.classList.contains("theme-dark");
+    const top = darkGlass ? [18, 20, 26] : [255, 255, 255];
+    const bot = darkGlass ? [8, 9, 12] : [242, 246, 252];
+    body.style.setProperty("--tint",
+      `linear-gradient(180deg, rgba(${top},${a}), rgba(${bot},${(a * 0.88).toFixed(3)}))`);
+
+    // 平铺模式（灵云当前实现）用固定的 --flat-fill，字色直接跟着它明暗
+    const mat = flatMode ? (darkGlass ? [0, 0, 0] : [255, 255, 255])
+                         : top.map(c => a * c + (1 - a) * 128);   // 128 = 中灰壁纸
+    const lum = relLum(mat[0], mat[1], mat[2]);
+    const cDark = ratio(lum, LUM_DARK_INK);
+    const cLight = ratio(lum, LUM_LIGHT_INK);
+    const useLight = cLight > cDark;
+    const inkOverride = body.classList.contains("ink-white") ? "white"
+      : body.classList.contains("ink-dark") ? "dark" : null;
+    if (!inkOverride) {
+      body.classList.toggle("text-light", useLight);
+      body.classList.toggle("text-dark", !useLight);
+    }
+    const chosen = inkOverride === "white" ? cLight : inkOverride === "dark" ? cDark : (useLight ? cLight : cDark);
+    readout.innerHTML =
+      `按中灰壁纸估算：深字 ${cDark.toFixed(1)}:1 · 白字 ${cLight.toFixed(1)}:1 · `
+      + `当前用${inkOverride === "white" ? "白字（手动）" : inkOverride === "dark" ? "深字（手动）" : useLight ? "白字" : "深字"}`
+      + (chosen < 4.5 ? ` <b style="color:#ffb4b4">⚠ 不达标（正文需 ≥4.5:1）</b>` : ` <b style="color:#8fe0a8">达标</b>`);
+  }
+
+  function mount() {
+    if (glass) { glass.destroy && glass.destroy(); glass = null; }
+    surface.style.backdropFilter = "";
+    glass = liquidGlass(surface, opts);
+    document.getElementById("ui").dataset.supported = glass.supported;
+  }
+  mount();
+
+  // 模式：真液态玻璃 / 灵云当前实现
+  const mGlass = document.getElementById("mGlass");
+  const mFlat = document.getElementById("mFlat");
+  function setMode(glassOn) {
+    body.classList.toggle("mode-glass", glassOn);
+    body.classList.toggle("mode-flat", !glassOn);
+    mGlass.classList.toggle("on", glassOn);
+    mFlat.classList.toggle("on", !glassOn);
+    flatMode = !glassOn;
+    if (glassOn) mount();
+    else { surface.style.backdropFilter = "none"; }
+    applyMaterial();
+  }
+  mGlass.onclick = () => setMode(true);
+  mFlat.onclick = () => setMode(false);
+  // 键盘 1 / 2 切换（方便对照截图）
+  addEventListener("keydown", e => {
+    if (e.key === "1") setMode(true);
+    if (e.key === "2") setMode(false);
+  });
+
+  // 参数
+  function bind(id, valId, fn, fmt) {
+    const el = document.getElementById(id);
+    const out = document.getElementById(valId);
+    const apply = () => {
+      const v = +el.value;
+      out.textContent = fmt ? fmt(v) : v;
+      fn(v);
+    };
+    el.oninput = apply;
+    apply();
+  }
+  bind("scale", "vScale", v => { opts.scale = -v; if (glass && glass.supported) glass.refresh(); });
+  bind("chroma", "vChroma", v => { opts.chroma = v; if (glass && glass.supported) glass.refresh(); });
+  bind("blur", "vBlur", v => { opts.blur = v; if (glass && glass.supported) glass.refresh(); });
+  bind("border", "vBorder", v => { opts.border = v / 100; if (glass && glass.supported) glass.refresh(); },
+       v => (v / 100).toFixed(2));
+
+  // 背景内容
+  const detail = document.getElementById("detail");
+  const bgPhoto = document.getElementById("bgPhoto");
+  const bgDetail = document.getElementById("bgDetail");
+  const bgBoth = document.getElementById("bgBoth");
+  function setBg(photo, det) {
+    document.getElementById("scene").style.opacity = photo ? 1 : 0.10;
+    detail.classList.toggle("on", det);
+    bgPhoto.classList.toggle("on", photo && !det);
+    bgDetail.classList.toggle("on", !photo && det);
+    bgBoth.classList.toggle("on", photo && det);
+  }
+  bgPhoto.onclick = () => setBg(true, false);
+  bgDetail.onclick = () => setBg(false, true);
+  bgBoth.onclick = () => setBg(true, true);
+  document.getElementById("scene").style.transition = "opacity .25s ease";
+  setBg(false, true);   // 默认：细网格 + 文字（直线被掰弯最能说明折射）
+
+  // 玻璃底色
+  const thLight = document.getElementById("thLight");
+  const thDark = document.getElementById("thDark");
+  thLight.onclick = () => { body.classList.remove("theme-dark"); body.classList.add("theme-light");
+    thLight.classList.add("on"); thDark.classList.remove("on"); applyMaterial(); };
+  thDark.onclick = () => { body.classList.add("theme-dark"); body.classList.remove("theme-light");
+    thDark.classList.add("on"); thLight.classList.remove("on"); applyMaterial(); };
+
+  thickEl.oninput = applyMaterial;
+  applyMaterial();
+
+  // 字色手动指定 / 补救层
+  const inkAuto = document.getElementById("inkAuto");
+  const inkWhite = document.getElementById("inkWhite");
+  const inkDark = document.getElementById("inkDark");
+  function setInk(kind) {
+    body.classList.toggle("ink-white", kind === "white");
+    body.classList.toggle("ink-dark", kind === "dark");
+    inkAuto.classList.toggle("on", !kind);
+    inkWhite.classList.toggle("on", kind === "white");
+    inkDark.classList.toggle("on", kind === "dark");
+    applyMaterial();
+  }
+  inkAuto.onclick = () => setInk(null);
+  inkWhite.onclick = () => setInk("white");
+  inkDark.onclick = () => setInk("dark");
+  const fixShadow = document.getElementById("fixShadow");
+  const fixScrim = document.getElementById("fixScrim");
+  fixShadow.onclick = () => {
+    body.classList.toggle("fix-shadow");
+    fixShadow.classList.toggle("on", body.classList.contains("fix-shadow"));
+  };
+  fixScrim.onclick = () => {
+    body.classList.toggle("fix-scrim");
+    fixScrim.classList.toggle("on", body.classList.contains("fix-scrim"));
+  };
+
+  // 点击展开 / 拖动
+  let dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
+  island.addEventListener("pointerdown", e => {
+    dragging = true; moved = false;
+    sx = e.clientX; sy = e.clientY;
+    const r = island.getBoundingClientRect();
+    ox = r.left; oy = r.top;
+    island.classList.add("dragging");
+    island.setPointerCapture(e.pointerId);
+  });
+  island.addEventListener("pointermove", e => {
+    if (!dragging) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+    island.style.transform = "none";
+    island.style.left = Math.max(0, Math.min(innerWidth - island.offsetWidth, ox + dx)) + "px";
+    island.style.top = Math.max(0, Math.min(innerHeight - island.offsetHeight, oy + dy)) + "px";
+  });
+  island.addEventListener("pointerup", e => {
+    dragging = false;
+    island.classList.remove("dragging");
+    if (!moved) toggleExpand();
+  });
+  function toggleExpand() {
+    const on = island.classList.toggle("expanded");
+    // 展开/收起会改尺寸：等过渡结束后重建位移贴图（否则贴图还是旧宽高，边缘会错位）
+    const w = on ? 460 : 420, h = on ? 320 : 52;
+    surface.style.width = w + "px";
+    surface.style.height = h + "px";
+    setTimeout(() => glass && glass.refresh(), 340);
+    island.style.left = Math.max(0, (innerWidth - w) / 2) + "px";
+  }
+  island.style.left = ((innerWidth - 420) / 2) + "px";
+  island.style.top = "8px";
+
+  // hash 直接摆好状态，方便对照截图，例如 #photo,expanded,flat（背景,形态,模式）
+  // 放在最后：上面用到的 const/函数都已就绪（提前跑会踩 TDZ）
+  {
+    const tokens = decodeURIComponent(location.hash.replace(/^#/, ""))
+      .split(",").map(s => s.trim()).filter(Boolean);
+    if (tokens.includes("flat")) setMode(false);
+    if (tokens.includes("photo")) setBg(true, false);
+    if (tokens.includes("detail")) setBg(false, true);
+    if (tokens.includes("both")) setBg(true, true);
+    if (tokens.includes("dark")) thDark.onclick();
+    if (tokens.includes("thin")) thickEl.value = "18";
+    if (tokens.includes("white")) setInk("white");
+    if (tokens.includes("shadow")) fixShadow.onclick();
+    if (tokens.includes("scrim")) fixScrim.onclick();
+    applyMaterial();
+    if (tokens.includes("expanded")) setTimeout(toggleExpand, 80);
+  }
+
+  if (!liquidGlassSupported) {
+    const hint = document.querySelector("#ui .hint");
+    hint.innerHTML = "<b style='color:#ffb4b4'>当前浏览器不支持 SVG 滤镜做 backdrop-filter（非 Chromium 内核），"
+      + "已退化为普通毛玻璃。</b><br>" + hint.innerHTML;
+  }
+})();
+</script>
+</body>
+</html>

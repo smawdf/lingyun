@@ -11,11 +11,14 @@ internal readonly record struct IslandPalette(
     SKColor Track, SKColor Card, SKColor Shadow, SKColor Ok, SKColor Danger, SKColor Warn,
     SKColor Border, SKColor Highlight, bool Dark, bool LiquidGlass)
 {
-    public static IslandPalette For(string? theme, int opacityPercent = 100)
+    public static IslandPalette For(string? theme, int opacityPercent = 100, bool? glassDark = null)
     {
-        var p = IsLiquidGlass(theme)
-            ? LiquidGlassTheme
-            : ResolveLight(theme, SystemUsesLightTheme()) ? LightTheme : DarkTheme;
+        IslandPalette p;
+        if (IsLiquidGlass(theme))
+            // 自适应：玻璃压的桌面暗（或玻璃很薄）时换深色材质 + 白字，见 PreferDarkGlass
+            p = glassDark == true ? LiquidGlassDarkTheme : LiquidGlassTheme;
+        else
+            p = ResolveLight(theme, SystemUsesLightTheme()) ? LightTheme : DarkTheme;
         if (opacityPercent >= 100) return p;
         // 只压背景类颜色：文字/强调色保持不透明，透明度调低也不会看不清字
         double a = Math.Clamp(opacityPercent, 40, 100) / 100.0;
@@ -113,6 +116,76 @@ internal readonly record struct IslandPalette(
         Highlight: new SKColor(255, 255, 255, 235),
         Dark: false,
         LiquidGlass: true);
+
+    /// <summary>
+    /// 深色液态玻璃：材质深、文字反白。背景很暗（或用户把玻璃调得很薄）时由自适应切换过来——
+    /// 浅色玻璃压在暗背景上合成亮度会掉到中间灰，深字对比度不达标，这时候反白才是对的。
+    /// </summary>
+    public static readonly IslandPalette LiquidGlassDarkTheme = new(
+        Body: new SKColor(0x12, 0x14, 0x18, 214),
+        Fg: SKColors.White,
+        Sub: new SKColor(0xc6, 0xcc, 0xd6),
+        Dim: new SKColor(0x98, 0xa0, 0xab),
+        Accent: new SKColor(0x60, 0xcd, 0xff),
+        Track: new SKColor(255, 255, 255, 36),
+        Card: new SKColor(255, 255, 255, 20),
+        Shadow: new SKColor(0, 0, 0, 150),
+        Ok: new SKColor(0x4a, 0xd9, 0x7a),
+        Danger: new SKColor(0xff, 0x6b, 0x6b),
+        Warn: new SKColor(0xfc, 0xe1, 0x00),
+        Border: new SKColor(255, 255, 255, 30),
+        Highlight: new SKColor(255, 255, 255, 38),
+        Dark: true,
+        LiquidGlass: true);
+
+    /// <summary>
+    /// 液态玻璃自适应：拿实测背景色判断该用浅色还是深色材质。
+    ///
+    /// 两条判据，按优先级：
+    ///   1) **可读性**：材质是半透明的，背景会参与合成，玻璃越薄影响越大。40% 时白玻璃压黑桌面
+    ///      合成亮度只有 ~0.13，深字掉到 3:1 不达标；同样条件下深玻璃 + 白字有 ~18:1。
+    ///   2) **与背景的分离度**：两边都够清楚时，选和背景亮度差得多的那套——白底上再放白玻璃
+    ///      会糊成一片、看不出岛在哪（苹果说的 "easily discernible"），这时候该翻成深色材质。
+    ///
+    /// 迟滞（避免鼠标划过明暗交界、或壁纸明暗抖动时材质来回闪）：当前这套既达标、又和背景
+    /// 分得开（亮度差 ≥0.18），且另一套没有明显更好的分离度（+0.12 以上），就保持不动。
+    /// </summary>
+    internal static bool PreferDarkGlass(SKColor backdrop, int opacityPercent, bool currentlyDark,
+        out double chosenContrast)
+    {
+        double a = Math.Clamp(opacityPercent, 40, 100) / 100.0;
+        var lightBody = Composite(LiquidGlassTheme.Body, backdrop, a);
+        var darkBody = Composite(LiquidGlassDarkTheme.Body, backdrop, a);
+        double lightC = Contrast(LiquidGlassTheme.Fg, lightBody);
+        double darkC = Contrast(LiquidGlassDarkTheme.Fg, darkBody);
+        double bgLum = RelativeLuminance(backdrop);
+        double lightSep = Math.Abs(RelativeLuminance(lightBody) - bgLum);
+        double darkSep = Math.Abs(RelativeLuminance(darkBody) - bgLum);
+        bool lightOk = lightC >= 4.5, darkOk = darkC >= 4.5;
+
+        chosenContrast = currentlyDark ? darkC : lightC;
+        double currentSep = currentlyDark ? darkSep : lightSep;
+        double otherSep = currentlyDark ? lightSep : darkSep;
+        bool currentOk = currentlyDark ? darkOk : lightOk;
+        bool otherOk = currentlyDark ? lightOk : darkOk;
+        if (currentOk && currentSep >= 0.18 && !(otherOk && otherSep > currentSep + 0.12))
+            return currentlyDark;
+
+        bool preferDark = lightOk != darkOk ? !lightOk : darkSep > lightSep;
+        chosenContrast = preferDark ? darkC : lightC;
+        return preferDark;
+    }
+
+    /// <summary>把材质色按「alpha × 不透明度缩放」压到实测背景上，得到实际看到的颜色。</summary>
+    internal static SKColor Composite(SKColor material, SKColor backdrop, double opacityScale)
+    {
+        double a = material.Alpha / 255.0 * Math.Clamp(opacityScale, 0, 1);
+        byte Mix(byte m, byte b) => (byte)Math.Round(m * a + b * (1 - a));
+        return new SKColor(
+            Mix(material.Red, backdrop.Red),
+            Mix(material.Green, backdrop.Green),
+            Mix(material.Blue, backdrop.Blue));
+    }
 
     /// <summary>WCAG 相对亮度（自测用：断言两套配色的前景/背景对比度达标）。</summary>
     internal static double RelativeLuminance(SKColor c)

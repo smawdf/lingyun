@@ -20,6 +20,7 @@ public partial class App : Application
     private AudioSpectrumService? _spectrum;
     private AudioVolumeService? _volume;
     private LyricsService? _lyrics;
+    private BackdropSampler? _backdrop;
     private bool _quitting;
     private Config.AppConfig? _cfg;
     private Ui.TaskEditorWindow? _taskEditor;
@@ -102,7 +103,10 @@ public partial class App : Application
         _volume = new AudioVolumeService();
         // 歌词：LRCLIB 在线查，失败静默降级（离线/接口变动只是没有歌词）
         _lyrics = new LyricsService();
-        _island = new Ui.NativeIslandApp(cfg, _media, _perf, _weather, _toast, _spectrum, _volume, _lyrics);
+        // 液态玻璃自适应：抓岛背后那一小块桌面算亮度（1 秒一次，约 0.5% 单核），
+        // 决定浅色玻璃（深字）还是深色玻璃（白字）
+        _backdrop = new BackdropSampler();
+        _island = new Ui.NativeIslandApp(cfg, _media, _perf, _weather, _toast, _spectrum, _volume, _lyrics, _backdrop);
         _island.ExitRequested += () => Dispatcher.Invoke(QuitApp);
         _island.TaskEditRequested += idx => Dispatcher.BeginInvoke(new Action(() => ShowTaskEditor(idx)));
         _island.SettingsRequested += () => Dispatcher.BeginInvoke(new Action(ShowSettingsWindow));
@@ -332,6 +336,7 @@ public partial class App : Application
         try { _spectrum?.Dispose(); } catch { /* ignore */ }
         try { _volume?.Dispose(); } catch { /* ignore */ }
         try { _lyrics?.Dispose(); } catch { /* ignore */ }
+        try { _backdrop?.Dispose(); } catch { /* ignore */ }
         try { _tray?.Dispose(); } catch { /* ignore */ }
         try { _instance?.Dispose(); } catch { /* ignore */ }
         TraceExit("cleanup done, calling Shutdown()");

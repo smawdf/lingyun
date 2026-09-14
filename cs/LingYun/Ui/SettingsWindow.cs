@@ -38,6 +38,7 @@ public sealed class SettingsWindow : Window
     private readonly RadioButton _themeLight = new();
     private readonly RadioButton _themeSystem = new();
     private readonly RadioButton _themeLiquidGlass = new();
+    private readonly CheckBox _glassAdaptive = new();
     private readonly RadioButton _styleA = new();
     private readonly RadioButton _styleB = new();
     private readonly RadioButton _styleC = new();
@@ -111,6 +112,13 @@ public sealed class SettingsWindow : Window
         _styleA.Checked += (_, _) => SetMediaStyle("a");
         _styleB.Checked += (_, _) => SetMediaStyle("b");
         _styleC.Checked += (_, _) => SetMediaStyle("c");
+        AddCheck(root, _glassAdaptive, "液态玻璃自适应",
+            "按岛背后的桌面明暗自动切换浅色玻璃（深字）/ 深色玻璃（白字），每秒采样一次（约 0.5% 单核）",
+            v =>
+            {
+                _cfg.GlassAdaptive = v;
+                _island.ApplyConfig();
+            });
         AddOpacityPresets(root);
 
         // ---- 位置与大小 ----
@@ -258,6 +266,7 @@ public sealed class SettingsWindow : Window
         Backfill(FindCheck("显示歌词"), _cfg.Lyrics);
         Backfill(FindCheck("卡拉OK逐字"), _cfg.LyricsKaraoke);
         _perfNetwork.IsChecked = _cfg.PerfNetwork;
+        _glassAdaptive.IsChecked = _cfg.GlassAdaptive;
         _composite.IsChecked = _cfg.Composite;
         _compositeClock.IsChecked = _cfg.CompositeClock;
         _compositeHardware.IsChecked = _cfg.CompositeHardware;

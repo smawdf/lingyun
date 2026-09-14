@@ -165,6 +165,13 @@ public static partial class Native
     public static extern IntPtr CreateDIBSection(
         IntPtr hdc, ref BITMAPINFO pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
 
+    [DllImport("gdi32.dll")]
+    public static extern bool BitBlt(IntPtr hdcDest, int xDest, int yDest, int w, int h,
+        IntPtr hdcSrc, int xSrc, int ySrc, uint dwRop);
+
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int w, int h);
+
     [DllImport("user32.dll")]
     public static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
 

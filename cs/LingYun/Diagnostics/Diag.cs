@@ -24,7 +24,7 @@ internal static class Diag
     {
         "--font-audit", "--dump-text", "--dump-frames", "--self-test", "--diag-all", "--diag-no-frames",
         "--diag-monitor", "--toast-probe", "--toast-test", "--diag-quick", "--spectrum-probe", "--marquee-probe",
-        "--wake-probe", "--settings-smoke",
+        "--wake-probe", "--settings-smoke", "--backdrop-probe",
     };
 
     public static bool ShouldRun(string[] args) => args.Any(a => Known.Contains(a));
@@ -158,6 +158,12 @@ internal static class Diag
         {
             try { failures += MarqueeProbe(w); }
             catch (Exception ex) { w.WriteLine("!! --marquee-probe 异常: " + ex); failures++; }
+        }
+
+        if (args.Contains("--backdrop-probe"))
+        {
+            try { failures += BackdropProbe(w, args); }
+            catch (Exception ex) { w.WriteLine("!! --backdrop-probe 异常: " + ex); failures++; }
         }
 
         w.WriteLine();
@@ -600,6 +606,16 @@ internal static class Diag
         { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass", MediaStyle = "c" });
         var mediaGlassC = new MediaSessionService();
         var appGlassC = new NativeIslandApp(glassCCfg, mediaGlassC);
+        // 深色液态玻璃（自适应切过去的那套）：白字 + 深材质
+        var glassDarkCfg = ConfigStore.Normalize(new AppConfig
+        { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass" });
+        var mediaGlassDark = new MediaSessionService();
+        var appGlassDark = new NativeIslandApp(glassDarkCfg, mediaGlassDark);
+        // 自适应端到端：40% 薄玻璃 + 注入"背后是深色壁纸" → 应自动变深色材质
+        var glassAdaptCfg = ConfigStore.Normalize(new AppConfig
+        { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass", Opacity = 40 });
+        var mediaGlassAdapt = new MediaSessionService();
+        var appGlassAdapt = new NativeIslandApp(glassAdaptCfg, mediaGlassAdapt);
 
         // 「重启」的下标从动作表算出来，不要写死——动作表会被增删，写死会让长按帧悄悄错位。
         int restartAt = QuickActions.IndexOf("restart");
@@ -965,6 +981,20 @@ internal static class Diag
                 appGlass.ForceMode("expanded");
                 appGlass.ForcePage(5);
             }),
+            // 深色液态玻璃（自适应会切过去的那套）：背景暗 / 玻璃薄时用，白字 + 深材质
+            ("compact-clock-glass-dark", () =>
+            {
+                appGlassDark.ForceGlassDark(true);
+                appGlassDark.ForceFocus("timer");
+                appGlassDark.ForceMode("compact");
+            }),
+            // 自适应端到端：同一个 40% 玻璃，注入"背后是深色壁纸"的采样结果 → 自动变深色材质
+            ("compact-clock-glass-adaptive-dark", () =>
+            {
+                appGlassAdapt.InjectBackdrop(24, 24, 28);
+                appGlassAdapt.ForceFocus("timer");
+                appGlassAdapt.ForceMode("compact");
+            }),
             // 液态玻璃 + 媒体页 B/C：验证沉浸底与氛围取色底同样受透明度控制
             ("expanded-media-style-b-glass", () =>
             {
@@ -1012,6 +1042,8 @@ internal static class Diag
             ["compact-clock-glass"] = appGlass, ["compact-clock-glass-40"] = appGlass40,
             ["expanded-plan-glass"] = appGlass, ["page-quick-glass"] = appGlass,
             ["expanded-media-style-b-glass"] = appGlassB, ["expanded-media-style-c-glass"] = appGlassC,
+            ["compact-clock-glass-dark"] = appGlassDark,
+            ["compact-clock-glass-adaptive-dark"] = appGlassAdapt,
         };
 
         var traceLines = new List<string>();
@@ -1082,6 +1114,10 @@ internal static class Diag
             mediaGlassB.Dispose();
             appGlassC.Dispose();
             mediaGlassC.Dispose();
+            appGlassDark.Dispose();
+            mediaGlassDark.Dispose();
+            appGlassAdapt.Dispose();
+            mediaGlassAdapt.Dispose();
         }
 
         return 0;
@@ -1245,6 +1281,83 @@ internal static class Diag
         w.WriteLine($"路径 = {how}");
         w.WriteLine();
         // 激活失败不算诊断失败：本机没装这个应用也会失败，这是环境问题不是代码回归
+        return 0;
+    }
+
+    // ==================================================================
+    // --backdrop-probe ：真机验证「液态玻璃自适应」的输入质量与开销
+    // ==================================================================
+    private static int BackdropProbe(TextWriter w, string[] args)
+    {
+        w.WriteLine("========== --backdrop-probe ==========");
+        w.WriteLine("# 目的：验证岛背后桌面采样采到的是「真正的背景」而不是岛自己，并测出真实开销。");
+        w.WriteLine("# 实现要点：实测 DWM 合成下 BitBlt 无论带不带 CAPTUREBLT 都会把本进程的分层窗一起采进来，");
+        w.WriteLine("#   所以不能采岛自身矩形，要采它周围那一圈并把岛（含阴影）从统计里剔除。下面第 1/2 行对此。");
+        w.WriteLine();
+
+        int n = 20;
+        int at = Array.IndexOf(args, "--backdrop-probe");
+        if (at >= 0 && at + 1 < args.Length
+            && int.TryParse(args[at + 1], out var k) && k is >= 1 and <= 500) n = k;
+
+        var cfg = ConfigStore.Load();
+        var wa = Displays.WorkAreaOf(cfg.MonitorIndex);
+        var (sx, sy) = Ui.NativeIslandApp.ShellPositionFor(wa.Left, wa.Right, wa.Top, cfg.OffsetX, cfg.OffsetY);
+        int iw = (int)Math.Round(Ui.NativeIslandApp.BaseCompactW * cfg.CompactScale);
+        int ih = (int)Math.Round(Ui.NativeIslandApp.BaseCompactH * cfg.CompactScale);
+        int ix = (Ui.NativeIslandApp.ShellWidth - iw) / 2;
+        int bandH = ih + 90;
+        w.WriteLine($"岛壳落位 = ({sx},{sy})　岛体矩形 = ({sx + ix},{sy}) {iw}×{ih}");
+        w.WriteLine($"采样带 = ({sx},{sy}) {Ui.NativeIslandApp.ShellWidth}×{bandH}，剔除岛体外扩 22px（阴影）");
+        w.WriteLine($"当前配置 theme={cfg.Theme}　opacity={cfg.Opacity}%　glass_adaptive={cfg.GlassAdaptive}");
+        w.WriteLine();
+
+        using var sampler = new Services.BackdropSampler();
+
+        // 对照 1：直接采岛自身矩形 —— 期望采到"岛自己"，证明不能这么采
+        var self = sampler.Sample(sx + ix, sy, iw, ih);
+        if (self is { } sv && sv.Known)
+            w.WriteLine($"① 岛自身矩形（错误做法）= RGB({sv.R},{sv.G},{sv.B})　亮度 {sv.Luminance:0.000}");
+
+        // 对照 2：采周围带并剔除岛 —— 真正的背景，同时计时
+        double min = double.MaxValue, max = 0, sum = 0;
+        int ok = 0;
+        var last = Services.BackdropSample.Unknown;
+        var skip = new Services.SampleRect(sx + ix - 22, sy - 22, iw + 44, ih + 44);
+        for (int i = 0; i < n; i++)
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            var s = sampler.Sample(sx, sy, Ui.NativeIslandApp.ShellWidth, bandH, skip);
+            double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0
+                        / System.Diagnostics.Stopwatch.Frequency;
+            min = Math.Min(min, ms);
+            max = Math.Max(max, ms);
+            sum += ms;
+            if (s is { } v && v.Known) { last = v; ok++; }
+            Thread.Sleep(100);
+        }
+        w.WriteLine($"② 周围带（正式做法）　成功 {ok}/{n} 次；单次 min {min:0.00} / avg {sum / n:0.00} / max {max:0.00} ms" +
+                    $"（1 秒一次 ≈ {sum / n / 10:0.00}% 单核）");
+
+        if (self is { } s1 && s1.Known && ok > 0 && Math.Abs(s1.Luminance - last.Luminance) > 0.05)
+            w.WriteLine("   两者差异明显 → 证实「直接采岛矩形采到的是自己」，必须采周围带并剔除");
+
+        if (ok > 0)
+        {
+            w.WriteLine($"背景平均色 = RGB({last.R},{last.G},{last.B})　亮度 = {last.Luminance:0.000}　最亮分区 = {last.BrightestCell:0.000}");
+            var bg = new SKColor(last.R, last.G, last.B);
+            bool dark = Ui.IslandPalette.PreferDarkGlass(bg, cfg.Opacity, false, out var c1);
+            bool stayDark = Ui.IslandPalette.PreferDarkGlass(bg, cfg.Opacity, true, out var c2);
+            w.WriteLine($"自适应（从浅色材质出发）→ {(dark ? "深色玻璃 + 白字" : "浅色玻璃 + 深字")}，合成对比度 {c1:0.00}:1");
+            w.WriteLine($"迟滞（从深色材质出发）→ {(stayDark ? "维持深色" : "回到浅色")}，合成对比度 {c2:0.00}:1");
+        }
+        else
+        {
+            w.WriteLine("!! 采样全部失败（无桌面会话/受保护内容），自适应会保持当前材质");
+        }
+        w.WriteLine();
+
+        // 采样失败只报告不判失败：没有桌面会话或内容受保护时本来就会失败，不是代码回归
         return 0;
     }
 
@@ -1969,6 +2082,46 @@ internal static class Diag
                 try { File.Delete(glassPath); } catch { /* ignore */ }
             }
 
+            // ---- 自适应：背景实测 → 浅色 / 深色液态玻璃 ----
+            Check("自适应：默认开启且落盘读回",
+                new AppConfig().GlassAdaptive
+                && ConfigStore.Normalize(new AppConfig { GlassAdaptive = false }).GlassAdaptive == false);
+
+            var glassDark = Ui.IslandPalette.LiquidGlassDarkTheme;
+            Check("深色液态玻璃：材质标记 + 深色 + 白字",
+                glassDark.LiquidGlass && glassDark.Dark
+                && Ui.IslandPalette.Contrast(glassDark.Fg, glassDark.Body) >= 7,
+                Ui.IslandPalette.Contrast(glassDark.Fg, glassDark.Body).ToString("0.0"));
+            Check("深色液态玻璃：For(..., glassDark:true) 取到深色那套",
+                Ui.IslandPalette.For("liquid-glass", 100, true).LiquidGlass
+                && Ui.IslandPalette.For("liquid-glass", 100, true).Dark
+                && !Ui.IslandPalette.For("liquid-glass", 100, false).Dark
+                && !Ui.IslandPalette.For("liquid-glass", 100, null).Dark);
+            Check("深色液态玻璃：40% 时背景类 alpha 同步变淡、文字不变",
+                Ui.IslandPalette.For("liquid-glass", 40, true).Body.Alpha
+                    < Ui.IslandPalette.For("liquid-glass", 100, true).Body.Alpha
+                && Ui.IslandPalette.For("liquid-glass", 40, true).Fg.Alpha == 255);
+
+            var darkBg = new SKColor(0x18, 0x18, 0x1c);     // 深色壁纸
+            var brightBg = new SKColor(0xf4, 0xf5, 0xf8);   // 浅色壁纸
+            Check("自适应：薄玻璃压深色壁纸 → 换深色材质（白字才够清楚）",
+                Ui.IslandPalette.PreferDarkGlass(darkBg, 40, false, out var draftContrast) && draftContrast >= 4.5,
+                draftContrast.ToString("0.00"));
+            Check("自适应：薄玻璃压浅色壁纸 → 保持浅色材质（深字）",
+                !Ui.IslandPalette.PreferDarkGlass(brightBg, 40, false, out _));
+            Check("自适应：白底上浅玻璃会糊成一片 → 翻深色材质（轮廓可辨）",
+                Ui.IslandPalette.PreferDarkGlass(brightBg, 100, false, out var sepContrast)
+                && sepContrast >= 4.5, sepContrast.ToString("0.00"));
+            Check("自适应：黑底上浅玻璃分得开，且已达标 → 维持浅色不折腾",
+                !Ui.IslandPalette.PreferDarkGlass(darkBg, 100, false, out var fullContrast) && fullContrast >= 7,
+                fullContrast.ToString("0.00"));
+            Check("自适应：迟滞——当前是深色且仍达标时不因小提升就换回浅色",
+                Ui.IslandPalette.PreferDarkGlass(new SKColor(0x3a, 0x3a, 0x40), 40, true, out _));
+            Check("自适应：合成色计算（材质 alpha × 不透明度压到背景上）",
+                Ui.IslandPalette.Composite(new SKColor(255, 255, 255, 255), new SKColor(0, 0, 0), 0.5)
+                    is { Red: 128, Green: 128, Blue: 128 }
+                && Ui.IslandPalette.Composite(new SKColor(255, 255, 255, 0), darkBg, 1.0).Red == darkBg.Red);
+
             Check("自动隐藏：默认关闭时永不隐藏",
                 !NativeIslandApp.ShouldAutoHide(false, true, false, false, false, 999, 10));
             Check("自动隐藏：有媒体 / 有弹层 / 鼠标在岛上 / 未超时 都不隐藏",
@@ -2016,6 +2169,20 @@ internal static class Diag
                         var c = b.GetPixel(x, y);
                         if (c.Alpha < 200) continue;
                         if ((c.Red * 299 + c.Green * 587 + c.Blue * 114) / 1000 < 100) n++;
+                    }
+                return n;
+            }
+
+            // 白字（深色材质）：不透明且偏亮——自适应切到深色玻璃后靠它证明"字真的反白了"
+            static int CountBrightInk(SKBitmap b, int x0, int y0, int x1, int y1)
+            {
+                int n = 0;
+                for (int y = y0; y < y1; y++)
+                    for (int x = x0; x < x1; x++)
+                    {
+                        var c = b.GetPixel(x, y);
+                        if (c.Alpha < 200) continue;
+                        if ((c.Red * 299 + c.Green * 587 + c.Blue * 114) / 1000 > 150) n++;
                     }
                 return n;
             }
@@ -2099,6 +2266,34 @@ internal static class Diag
             int ink40 = CountDarkInk(fGlass40, 258, 8, 400, 44);
             Check("离屏 alpha：40% 时时间文字仍清晰（只压背景不压字）",
                 ink100 > 40 && ink40 >= ink100 * 3 / 4, $"100%={ink100} 40%={ink40}");
+
+            // 自适应端到端：同一个岛，注入"背后是深色壁纸"的采样结果 → 应换深色玻璃 + 白字
+            using var gm9 = new MediaSessionService();
+            var gAdapt = new NativeIslandApp(
+                new AppConfig { Theme = "liquid-glass", Opacity = 40 }, gm9);
+            gAdapt.ForceFocus("timer");
+            gAdapt.ForceMode("compact");
+            gAdapt.InjectBackdrop(24, 24, 28);          // 深色壁纸
+            using var fAdaptDark = RenderTransparent(gAdapt);
+            Check("自适应：深色壁纸 + 40% 薄玻璃 → 自动切深色材质",
+                gAdapt.BackdropState.Dark && gAdapt.BackdropState.Known,
+                $"luminance={gAdapt.BackdropState.Luminance:0.000} contrast={gAdapt.BackdropState.Contrast:0.00}");
+            Check("自适应：切过去的材质读起来是白字（亮像素）",
+                CountBrightInk(fAdaptDark, 258, 8, 400, 44) > 40,
+                CountBrightInk(fAdaptDark, 258, 8, 400, 44).ToString());
+
+            // 同一份深色背景 + 不透明玻璃：浅色材质本来就清楚，不该换皮
+            using var gm10 = new MediaSessionService();
+            var gAdaptFull = new NativeIslandApp(new AppConfig { Theme = "liquid-glass" }, gm10);
+            gAdaptFull.ForceFocus("timer");
+            gAdaptFull.ForceMode("compact");
+            gAdaptFull.InjectBackdrop(24, 24, 28);
+            using var fAdaptLight = RenderTransparent(gAdaptFull);
+            Check("自适应：同一背景 + 100% 玻璃 → 保持浅色材质（深字）",
+                !gAdaptFull.BackdropState.Dark && CountDarkInk(fAdaptLight, 258, 8, 400, 44) > 40);
+            Check("自适应：两种材质出图确实不同",
+                Differing(fAdaptLight, fAdaptDark) > 500,
+                Differing(fAdaptLight, fAdaptDark).ToString());
 
             Check("离屏渲染：深/浅/液态玻璃三种主题出图互不相同",
                 Differing(fDark, fGlass) > 500 && Differing(fLight, fGlass) > 500

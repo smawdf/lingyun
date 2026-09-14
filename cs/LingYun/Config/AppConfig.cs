@@ -72,6 +72,11 @@ public sealed class AppConfig
     public int LyricDelayMs { get; set; }
     /// <summary>背景不透明度（40–100%，只作用于背景类颜色，文字不变）。</summary>
     public int Opacity { get; set; } = 100;
+    /// <summary>
+    /// 液态玻璃自适应（默认开）：抓岛背后那一小块桌面算亮度，自动在浅色玻璃（深字）
+    /// 与深色玻璃（白字）之间切换，保证任何壁纸下文字都清楚。只对 theme=liquid-glass 生效。
+    /// </summary>
+    public bool GlassAdaptive { get; set; } = true;
     /// <summary>闲置自动隐藏：无媒体且鼠标离开 10 秒后收起岛，光标压到屏幕顶部恢复。</summary>
     public bool AutoHide { get; set; }
     /// <summary>

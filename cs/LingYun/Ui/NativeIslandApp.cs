@@ -88,7 +88,9 @@ public sealed class NativeIslandApp : IDisposable
             if (_palCache is null || (DateTime.UtcNow - _palAt).TotalSeconds >= 2)
             {
                 _palAt = DateTime.UtcNow;
-                _palCache = IslandPalette.For(_cfg.Theme, _cfg.Opacity);
+                var glassDark = _glassOverride ?? _glassDark;
+                _palCache = IslandPalette.For(_cfg.Theme, _cfg.Opacity,
+                    IslandPalette.IsLiquidGlass(_cfg.Theme) ? glassDark : null);
             }
             return _palCache.Value;
         }
@@ -96,6 +98,15 @@ public sealed class NativeIslandApp : IDisposable
 
     private IslandPalette? _palCache;
     private DateTime _palAt;
+
+    // ---- 液态玻璃自适应：背景实测 → 浅色/深色材质 ----
+    private readonly BackdropSampler? _backdrop;
+    private bool _glassDark;                 // 自适应结果：当前用深色玻璃（白字）
+    private bool? _glassOverride;            // 诊断强制指定；null = 交回自适应
+    private double _backdropLum = double.NaN;
+    private double _glassContrast = double.NaN;
+    private DateTime _nextBackdropAt = DateTime.MinValue;
+    private const double BackdropIntervalMs = 1000;   // 每秒采一次：一次 5.5ms ≈ 0.5% 单核（实测）
 
     /// <summary>展开面板各页的专属强调色（深/浅两套，对齐设计提案：计划青/性能绿/天气蓝/日程紫/日历琥珀/快捷红）。</summary>
     internal SKColor PageAccent(int page) => Pal.Dark
@@ -224,7 +235,7 @@ public sealed class NativeIslandApp : IDisposable
     public NativeIslandApp(AppConfig cfg, MediaSessionService media,
         PerfSampler? perf = null, WeatherService? weather = null, ToastService? toast = null,
         AudioSpectrumService? spectrum = null, AudioVolumeService? volume = null,
-        LyricsService? lyrics = null)
+        LyricsService? lyrics = null, BackdropSampler? backdrop = null)
     {
         _cfg = cfg;
         _islandW = CompactW;
@@ -233,6 +244,7 @@ public sealed class NativeIslandApp : IDisposable
         _spectrum = spectrum;
         _volumeSvc = volume;
         _lyrics = lyrics;
+        _backdrop = backdrop;
         _media.Updated += _ => { /* 下一帧绘制 */ };
         if (perf is not null) perf.Metrics += m => _perf = m;
         if (weather is not null) weather.Updated += w => _weather = w;
@@ -408,6 +420,7 @@ public sealed class NativeIslandApp : IDisposable
         _palCache = null;          // 主题/透明度改动立刻生效，不等缓存过期
         Retarget();
         _host.Move(_shellX, _shellY);
+        UpdateBackdrop(DateTime.UtcNow, force: true);   // 主题/不透明度变了，重新判断该用浅还是深材质
     });
 
     /// <summary>
@@ -486,6 +499,7 @@ public sealed class NativeIslandApp : IDisposable
             SaveMonitorChoice();
         }
         _host.Move(_shellX, _shellY);
+        UpdateBackdrop(DateTime.UtcNow, force: true);   // 换屏/改分辨率后背后内容整个换了
     }
 
     /// <summary>
@@ -628,6 +642,7 @@ public sealed class NativeIslandApp : IDisposable
         {
             _leftAt = nowUtc;   // 重新计时，避免刚显示又立刻收起
             _host.SetVisible(true);
+            UpdateBackdrop(nowUtc, force: true);   // 收起期间桌面可能已经换过，显示前重采一次
         }
     }
 
@@ -1387,12 +1402,14 @@ public sealed class NativeIslandApp : IDisposable
             _ => CompactTarget(),
         };
         _morphT = 0;
+        UpdateBackdrop(DateTime.UtcNow, force: true);   // 岛矩形变了，按新范围重新采一次背景
     }
 
     private void Tick()
     {
         SyncLyrics();
         UpdateMediaFocus();
+        UpdateBackdrop(DateTime.UtcNow);
         // 通知过期（或开关被关掉）：撤下并按新形态重定尺寸。
         // 必须放在 _paused / 无计划的提前 return 之前——通知不归计划管
         if (_toast is not null && !ToastActive)
@@ -1439,6 +1456,67 @@ public sealed class NativeIslandApp : IDisposable
                 try { Console.Beep(880, 70); } catch { /* ignore */ }
             }
         }
+    }
+
+    /// <summary>
+    /// 液态玻璃自适应：按节拍抓一次岛背后的桌面亮度，决定用浅色玻璃（深字）还是深色玻璃（白字）。
+    ///
+    /// 只有 theme=liquid-glass、开着自适应、岛可见时才采样。实测一次约 5.5ms（整块 BitBlt 进
+    /// 复用 DIB + 直接读内存），1 秒一次 ≈ 0.5% 单核；静止画面不会重复着色，只在结论变化时换材质。
+    /// 必须在岛线程调用：BackdropSampler 的 DIB 不是线程安全的，也不该和绘制抢同一块内存。
+    /// </summary>
+    private void UpdateBackdrop(DateTime nowUtc, bool force = false)
+    {
+        if (_backdrop is null || !IslandPalette.IsLiquidGlass(_cfg.Theme)) return;
+        if (_glassOverride is not null) return;                 // 诊断强制态：不采样
+        if (!_cfg.GlassAdaptive)
+        {
+            if (_glassDark) { _glassDark = false; _palCache = null; }
+            return;
+        }
+        if (!force && nowUtc < _nextBackdropAt) return;
+        _nextBackdropAt = nowUtc.AddMilliseconds(BackdropIntervalMs);
+        if (!_host.Visible) return;
+
+        var (ix, iy, iw, ih) = Island();
+        // 采的是"岛周围那一圈桌面"，并把岛自己（含阴影外扩 22px）从统计里剔除——
+        // 实测 DWM 下 BitBlt 会把本进程的分层窗一起采进来，直接采岛矩形等于照镜子。
+        int bandH = Math.Min(ShellH, ih + 90);
+        var sample = _backdrop.Sample(
+            _shellX, _shellY, ShellW, bandH,
+            new Services.SampleRect(_shellX + ix - 22, _shellY + iy - 22, iw + 44, ih + 44));
+        if (sample is not { } s || !s.Known) return;            // 抓不到就保持当前材质，不自作主张
+        _backdropLum = s.Luminance;
+        // 最亮分区代表"最不利的区域"：平均亮度会被大片暗色稀释，只看平均会漏掉半明半暗的壁纸
+        bool dark = IslandPalette.PreferDarkGlass(
+            new SKColor(s.R, s.G, s.B), _cfg.Opacity, _glassDark, out _glassContrast);
+        if (s.BrightestCell > 0.82 && _cfg.Opacity < 70) dark = false;   // 有很亮的区域且玻璃薄：浅材质更稳
+        if (dark != _glassDark)
+        {
+            _glassDark = dark;
+            _palCache = null;                                    // 立刻换色，不等缓存过期
+        }
+    }
+
+    /// <summary>诊断用：最近一次背景采样与自适应结论。</summary>
+    internal (double Luminance, double Contrast, bool Dark, bool Known) BackdropState
+        => (_backdropLum, _glassContrast, _glassDark, !double.IsNaN(_backdropLum));
+
+    /// <summary>离屏渲染用：强制液态玻璃的深浅材质（null = 交回自适应）。</summary>
+    internal void ForceGlassDark(bool? dark)
+    {
+        _glassOverride = dark;
+        _palCache = null;
+    }
+
+    /// <summary>
+    /// 离屏渲染用：注入一次背景采样结果（不真抓屏），驱动自适应决策。
+    /// </summary>
+    internal void InjectBackdrop(byte r, byte g, byte b)
+    {
+        _backdropLum = IslandPalette.RelativeLuminance(new SKColor(r, g, b));
+        _glassDark = IslandPalette.PreferDarkGlass(new SKColor(r, g, b), _cfg.Opacity, _glassDark, out _glassContrast);
+        _palCache = null;
     }
 
     private void Finish()
