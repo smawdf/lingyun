@@ -2054,7 +2054,6 @@ internal static class Diag
                 glass40.Body.Alpha < glass70.Body.Alpha && glass70.Body.Alpha < glass.Body.Alpha
                 && glass40.Card.Alpha < glass70.Card.Alpha && glass70.Card.Alpha < glass.Card.Alpha
                 && glass40.Border.Alpha < glass70.Border.Alpha && glass70.Border.Alpha < glass.Border.Alpha
-                && glass40.Highlight.Alpha < glass.Highlight.Alpha
                 && glass40.Shadow.Alpha < glass70.Shadow.Alpha && glass70.Shadow.Alpha < glass.Shadow.Alpha,
                 $"body {glass40.Body.Alpha}/{glass70.Body.Alpha}/{glass.Body.Alpha}");
             Check("液态玻璃：文字/强调/状态色不随透明度变淡",

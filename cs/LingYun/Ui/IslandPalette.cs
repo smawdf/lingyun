@@ -3,13 +3,13 @@ using SkiaSharp;
 namespace LingYun.Ui;
 
 /// <summary>
-/// 岛体配色（深/浅两套）。所有绘制都从这里取色——以前散在各 draw 方法里的硬编码颜色
+/// 岛体配色（深/浅/液态玻璃）。所有绘制都从这里取色——以前散在各 draw 方法里的硬编码颜色
 /// 导致「配置里有 theme 字段但原生岛根本不理会」，浅色主题完全无效。
 /// </summary>
 internal readonly record struct IslandPalette(
     SKColor Body, SKColor Fg, SKColor Sub, SKColor Dim, SKColor Accent,
     SKColor Track, SKColor Card, SKColor Shadow, SKColor Ok, SKColor Danger, SKColor Warn,
-    SKColor Border, SKColor Highlight, bool Dark, bool LiquidGlass)
+    SKColor Border, bool Dark, bool LiquidGlass)
 {
     public static IslandPalette For(string? theme, int opacityPercent = 100, bool? glassDark = null)
     {
@@ -29,7 +29,6 @@ internal readonly record struct IslandPalette(
             Track = ScaleAlpha(p.Track, a),
             Shadow = ScaleAlpha(p.Shadow, a),
             Border = ScaleAlpha(p.Border, a),
-            Highlight = ScaleAlpha(p.Highlight, a),
         };
     }
 
@@ -74,7 +73,6 @@ internal readonly record struct IslandPalette(
         Danger: new SKColor(0xff, 0x6b, 0x6b),
         Warn: new SKColor(0xfc, 0xe1, 0x00),
         Border: new SKColor(255, 255, 255, 26),
-        Highlight: new SKColor(255, 255, 255, 14),
         Dark: true,
         LiquidGlass: false);
 
@@ -92,7 +90,6 @@ internal readonly record struct IslandPalette(
         Danger: new SKColor(0xcc, 0x2b, 0x2b),
         Warn: new SKColor(0xa8, 0x6a, 0x00),
         Border: new SKColor(0, 0, 0, 23),
-        Highlight: new SKColor(255, 255, 255, 170),
         Dark: false,
         LiquidGlass: false);
 
@@ -113,7 +110,6 @@ internal readonly record struct IslandPalette(
         Danger: new SKColor(0xc8, 0x2b, 0x2b),
         Warn: new SKColor(0x9b, 0x63, 0x00),
         Border: new SKColor(255, 255, 255, 190),
-        Highlight: new SKColor(255, 255, 255, 235),
         Dark: false,
         LiquidGlass: true);
 
@@ -134,7 +130,6 @@ internal readonly record struct IslandPalette(
         Danger: new SKColor(0xff, 0x6b, 0x6b),
         Warn: new SKColor(0xfc, 0xe1, 0x00),
         Border: new SKColor(255, 255, 255, 30),
-        Highlight: new SKColor(255, 255, 255, 38),
         Dark: true,
         LiquidGlass: true);
 

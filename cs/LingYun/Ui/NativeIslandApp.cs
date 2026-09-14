@@ -1550,7 +1550,11 @@ public sealed class NativeIslandApp : IDisposable
     private SKColor BackgroundAlpha(SKColor color, byte alpha)
         => color.WithAlpha((byte)Math.Clamp(Math.Round(alpha * OpacityFactor), 0, 255));
 
-    /// <summary>统一绘制卡片/面板表面：填充、细边框、顶部内高光。</summary>
+    /// <summary>
+    /// 统一绘制卡片/面板表面：填充 + 1px 描边。
+    /// 不做"默认高光"——真实玻璃的亮边来自菲涅尔反射（只在边缘、随环境变），
+    /// 在材质顶部贴一条固定的亮线等于假设"光永远从正上方来"，背景一变就露馅。
+    /// </summary>
     private void DrawMaterialSurface(SKCanvas canvas, SKRect r, float radius, SKColor fill)
     {
         using (var bg = new SKPaint { Color = fill, IsAntialias = true })
@@ -1563,12 +1567,6 @@ public sealed class NativeIslandApp : IDisposable
             StrokeWidth = 1,
         })
             canvas.DrawRoundRect(r, radius, radius, bd);
-        using (var hi = new SKPaint { Color = Pal.Highlight, IsAntialias = true })
-            canvas.DrawRoundRect(
-                new SKRect(r.Left + radius * 0.4f, r.Top + 1, r.Right - radius * 0.4f, r.Top + 2.2f),
-                1.1f,
-                1.1f,
-                hi);
     }
 
     private void DrawMaterialCard(SKCanvas canvas, SKRect r, float radius)
@@ -3028,9 +3026,6 @@ public sealed class NativeIslandApp : IDisposable
 
             using (var bg = new SKPaint { Color = pressing ? BackgroundAlpha(Pal.Danger, 90) : Pal.Card, IsAntialias = true })
                 canvas.DrawRoundRect(cell, 14 * s, 14 * s, bg);
-            // 顶部 1px 内高光（玻璃质感）
-            using (var hi = new SKPaint { Color = Pal.Highlight, IsAntialias = true })
-                canvas.DrawRoundRect(cell.Left + 2 * s, cell.Top + 1.5f * s, cell.Width - 4 * s, 2 * s, 2 * s, 2 * s, hi);
 
             // 圆钮/标签按卡高比例定位（不是固定偏移）：卡被压扁时内容仍在卡内
             // 比例取自 HTML 实测：99 高时圆钮中心 40、标签基线 74
@@ -3329,12 +3324,12 @@ public sealed class NativeIslandApp : IDisposable
     }
 
     /// <summary>
-    /// 玻璃卡：填充（可选同色渐变染）+ 1px 描边 + 顶部内高光。
+    /// 玻璃卡：填充（可选同色渐变染）+ 1px 描边。
     /// 后两项对应 HTML 原型 `.card{ border:1px solid rgba(255,255,255,.10);
     /// box-shadow: inset 0 1px 0 rgba(255,255,255,.05) }`——缺了它们卡片会显得又平又糊。
     /// </summary>
     /// <summary>
-    /// 玻璃卡：平铺填充 + 1px 描边 + 顶部内高光。
+    /// 玻璃卡：平铺填充 + 1px 描边。
     /// 原型的卡片渐变染（accent 13%）实测只比纯卡片亮 ~14，为避开 SkiaSharp
     /// 渐变着色器的 alpha 放大问题（实测 ×3.8），这里不画染层。
     /// </summary>

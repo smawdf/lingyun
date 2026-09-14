@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>灵云 · 设置主页原型（亚克力 / 液态玻璃 / 原生 Windows）</title>
+<style>
+/* =====================================================================
+   灵云设置「主页」原型 —— 左侧分区 + 右侧内容。
+   同一套 DOM，三种界面材质可切换：
+     .style-acrylic 亚克力（Win11 云母/亚克力：模糊 + 噪点 + 细边）
+     .style-glass   液态玻璃（真折射：SVG 位移滤镜 + 镜面高光 + 色散边）
+     .style-win     原生 Windows（纯色面板 + 1px 灰边 + 方角 + 系统控件长相）
+   设置项按灵云现有实现列全，方便确认后 1:1 落到 WPF。
+   ===================================================================== */
+
+:root{
+  --accent:#2f6fd0;
+  --radius:12px;
+  --sidebar-w:196px;
+  --win-w:820px; --win-h:580px;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;overflow:hidden;font-family:"Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;}
+body{background:#0b0d12;color:#eaeef5;}
+#wall{position:fixed;inset:0;width:100%;height:100%;display:block;}
+
+/* ---------- 演示页外壳（不属于原型本身） ---------- */
+#stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}
+#demoBar{
+  position:fixed;left:16px;bottom:16px;z-index:50;
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+  padding:10px 12px;border-radius:12px;font-size:12px;
+  background:rgba(12,14,20,.72);backdrop-filter:blur(14px);
+  box-shadow:0 16px 36px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.10);
+}
+#demoBar b{font-weight:600;color:#cfd6e2;margin-right:2px;}
+#demoBar button{
+  font:inherit;font-size:11.5px;color:#dfe4ec;cursor:pointer;
+  padding:5px 10px;border-radius:8px;border:0;background:rgba(255,255,255,.10);
+}
+#demoBar button.on{background:#2f6fd0;color:#fff;}
+#demoBar .sep{width:1px;height:18px;background:rgba(255,255,255,.14);margin:0 2px;}
+#demoBar .hint{color:#8b93a1;font-size:11px;max-width:280px;line-height:1.45;}
+
+/* =====================================================================
+   设置窗口三套材质
+   ===================================================================== */
+.win{
+  position:relative;width:var(--win-w);height:var(--win-h);
+  display:flex;flex-direction:column;overflow:hidden;
+  color:var(--tx);
+  transition:border-radius .18s ease, background .18s ease;
+}
+.win .noise{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .18s;}
+.win .glare{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .18s;}
+
+/* —— 浅色 / 深色（跟随系统主题） —— */
+body.light{ --tx:#16181c; --tx-sub:#4c5058; --tx-dim:#6a6f78; --face:#f4f6f9; --line:#d8dde5; --hover:rgba(0,0,0,.05); }
+body.dark { --tx:#f2f4f8; --tx-sub:#b6bcc6; --tx-dim:#8b919b; --face:#1f2024; --line:#33363c; --hover:rgba(255,255,255,.07); }
+
+/* —— 亚克力 —— */
+body.style-acrylic .win{
+  border-radius:10px;
+  background:color-mix(in srgb, var(--face) 74%, transparent);
+  backdrop-filter:blur(40px) saturate(1.35);
+  box-shadow:0 30px 70px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.13);
+}
+body.style-acrylic .win .noise{opacity:.5;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>");
+}
+
+/* —— 液态玻璃 —— */
+/* 不带任何"默认高光"：材质只有 色调 + 边缘折射 + 1px 玻璃边。
+   真实玻璃的亮边来自菲涅尔反射（只在边缘、随环境变），静态贴一层顶部渐变
+   等于假设"光永远从正上方来"，背景一变就露馅——所以整块去掉了。 */
+body.style-glass .win{
+  border-radius:20px;
+  background:var(--glass-tint);
+  box-shadow:
+    0 34px 80px rgba(0,0,0,.55),
+    inset 0 0 0 1px rgba(255,255,255,.16);    /* 玻璃边（不是高光） */
+}
+body.style-glass .win .glare{display:none;}
+/* 玻璃内部的分区不再叠自己的模糊，避免"糊上加糊" */
+body.style-glass .side,body.style-glass .content{background:transparent;backdrop-filter:none;}
+
+/* —— 原生 Windows（不用任何透明，控件走系统长相：单选圈 / 勾选框 / 3D 斜角按钮 / 凹陷输入） —— */
+body.style-win{font-family:"Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;--face:#f0f0f0;--line:#a0a0a0;}
+body.dark.style-win{--face:#202020;--line:#3a3a3a;}
+body.style-win .win{
+  border-radius:0;
+  background:var(--face);
+  box-shadow:
+    inset 1px 1px 0 #ffffff, inset -1px -1px 0 #9a9a9a,   /* 经典凸起窗框 */
+    inset 2px 2px 0 var(--face), inset -2px -2px 0 #d6d6d6,
+    0 18px 50px rgba(0,0,0,.5);
+}
+body.style-win .win .noise,body.style-win .win .glare{opacity:0;}
+body.style-win .side{background:transparent;}
+
+/* 单选圈 / 勾选框：同一套 DOM，纯 CSS 换长相 */
+body.style-win .seg{gap:16px;}
+body.style-win .seg button{
+  background:none;border:0;box-shadow:none;padding:0;font-size:12px;color:var(--tx);
+  display:flex;align-items:center;gap:6px;
+}
+body.style-win .seg button::before{
+  content:"";width:13px;height:13px;border-radius:50%;flex:0 0 auto;background:#fff;
+  box-shadow:inset 0 0 0 1px #8b8b8b, inset 1px 1px 3px rgba(0,0,0,.30);
+}
+body.style-win .seg button.on::before{
+  background:radial-gradient(circle, #0a0a0a 0 2.6px, #fff 3px 100%);
+}
+/* 多选（组合模式模块）用方框 + 勾 */
+body.style-win #modSeg button::before{border-radius:1px;}
+body.style-win #modSeg button.on::before{
+  background:radial-gradient(circle at 50% 55%, transparent 0 100%), #fff;
+  box-shadow:inset 0 0 0 1px #8b8b8b, inset 1px 1px 3px rgba(0,0,0,.25);
+}
+body.style-win #modSeg button.on{position:relative;}
+body.style-win #modSeg button.on::after{
+  content:"✓";position:absolute;left:1.5px;top:-2px;font-size:11px;color:#0a0a0a;
+}
+
+/* 开关 → 勾选框 */
+body.style-win .sw{width:14px;height:14px;border-radius:0;background:#fff;
+  box-shadow:inset 0 0 0 1px #8b8b8b, inset 1px 1px 3px rgba(0,0,0,.28);}
+
+body.style-win .sw.on::after{content:"✓";position:absolute;inset:0;font-size:11px;line-height:13px;text-align:center;color:#0a0a0a;}
+
+/* 滑杆 → 凹陷槽 + 方滑块 */
+body.style-win .slider input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;height:20px;}
+body.style-win .slider input[type=range]::-webkit-slider-runnable-track{
+  height:4px;background:#e4e4e4;border-radius:0;
+  box-shadow:inset 1px 1px 0 #8b8b8b, inset -1px -1px 0 #ffffff;
+}
+body.style-win .slider input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:11px;height:20px;margin-top:-8px;border-radius:0;
+  background:#f0f0f0;border:1px solid #707070;
+  box-shadow:inset 1px 1px 0 #ffffff, inset -1px -1px 0 #c8c8c8;
+}
+
+/* 按钮 → 3D 斜角 */
+body.style-win .btn{
+  border-radius:0;background:#f0f0f0;color:#0a0a0a;border:1px solid #707070;
+  box-shadow:inset 1px 1px 0 #ffffff, inset -1px -1px 0 #c8c8c8;
+}
+body.style-win .btn.primary{
+  background:#f0f0f0;color:#0a0a0a;border-color:#707070;box-shadow:inset 1px 1px 0 #ffffff, inset -1px -1px 0 #c8c8c8;
+  outline:1px solid #0a0a0a;outline-offset:0;font-weight:600;   /* 默认按钮的粗边 */
+}
+body.style-win .chips button{border-radius:0;background:#f0f0f0;border:1px solid #707070;color:#0a0a0a;
+  box-shadow:inset 1px 1px 0 #ffffff, inset -1px -1px 0 #c8c8c8;}
+body.style-win .card{border-radius:0;background:transparent;box-shadow:none;border:1px solid #a0a0a0;padding:2px 10px;}
+body.style-win .note{border-radius:0;background:#ffffff;box-shadow:inset 0 0 0 1px #a0a0a0;}
+body.style-win .title .logo{border-radius:0;background:#2f6fd0;}
+body.style-win .tab{border-radius:0;padding:6px 9px;font-size:12px;}
+body.style-win .tab.on{background:#316ac5;color:#fff;font-weight:400;}
+body.style-win .tab svg{stroke-width:1.5;}
+body.style-win .title .tbtn{border-radius:0;border:1px solid #707070;background:#f0f0f0;color:#0a0a0a;
+  box-shadow:inset 1px 1px 0 #ffffff, inset -1px -1px 0 #c8c8c8;width:26px;height:22px;font-size:11px;}
+body.style-win .title .badge{border-radius:0;border-color:#a0a0a0;}
+
+/* 浅色玻璃 / 深色玻璃的材质色（对应灵云调色板；浅色那套要够厚，否则暗字压在晚霞上读不出来） */
+body.light{ --glass-tint:linear-gradient(180deg, rgba(255,255,255,.78), rgba(244,247,252,.68)); }
+body.dark { --glass-tint:linear-gradient(180deg, rgba(20,22,28,.72), rgba(10,11,14,.80)); }
+
+/* =====================================================================
+   标题栏 + 侧栏 + 内容
+   ===================================================================== */
+.title{display:flex;align-items:center;gap:10px;padding:14px 14px 10px 18px;flex:0 0 auto;}
+.title .logo{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#60cdff,#0a7af0);flex:0 0 auto;}
+.title h1{margin:0;font-size:14.5px;font-weight:600;letter-spacing:.2px;}
+.title .badge{font-size:10.5px;color:var(--tx-dim);border:1px solid var(--line);border-radius:6px;padding:1px 6px;}
+.title .grow{flex:1;}
+.title .tbtn{width:30px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--tx-sub);cursor:pointer;font-size:13px;}
+.title .tbtn:hover{background:var(--hover);}
+
+
+
+.body{display:flex;flex:1;min-height:0;}
+.side{
+  width:var(--sidebar-w);flex:0 0 auto;padding:6px 10px 12px;display:flex;flex-direction:column;gap:2px;
+  border-right:1px solid var(--line);
+}
+body.style-acrylic .side{background:color-mix(in srgb, var(--face) 34%, transparent);}
+
+.tab{
+  display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;
+  font-size:12.5px;color:var(--tx-sub);cursor:pointer;user-select:none;
+}
+.tab:hover{background:var(--hover);}
+.tab svg{width:16px;height:16px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.6;}
+.tab.on{color:var(--tx);font-weight:600;}
+body.style-acrylic .tab.on,body.style-glass .tab.on{background:color-mix(in srgb, var(--accent) 26%, transparent);}
+
+
+.side .foot{margin-top:auto;padding:8px 10px;font-size:10.5px;color:var(--tx-dim);line-height:1.5;}
+
+.content{flex:1;min-width:0;overflow-y:auto;padding:8px 22px 22px;}
+.pane{display:none;}
+.pane.on{display:block;}
+.pane h2{margin:12px 0 2px;font-size:15px;}
+.pane .sub{margin:0 0 14px;font-size:11px;color:var(--tx-dim);line-height:1.55;}
+
+.group{margin:0 0 18px;}
+.group > .glabel{font-size:11px;color:var(--tx-dim);margin:0 0 7px;letter-spacing:.03em;}
+.card{
+  border-radius:12px;padding:4px 14px;
+  background:color-mix(in srgb, var(--face) 55%, transparent);
+  box-shadow:inset 0 0 0 1px var(--line);
+}
+
+.row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);}
+.row:last-child{border-bottom:0;}
+.row .lab{font-size:12.5px;min-width:76px;}
+.row .desc{font-size:11px;color:var(--tx-dim);line-height:1.5;}
+.row .grow{flex:1;min-width:0;}
+.row.col{display:block;}
+.row.col .desc{margin-top:5px;}
+
+/* 单选药丸 / 分段 */
+.seg{display:flex;gap:6px;flex-wrap:wrap;}
+.seg button{
+  font:inherit;font-size:12px;color:var(--tx-sub);cursor:pointer;
+  padding:5px 11px;border-radius:8px;border:1px solid transparent;
+  background:color-mix(in srgb, var(--face) 60%, transparent);
+  box-shadow:inset 0 0 0 1px var(--line);
+}
+.seg button.on{color:var(--accent);font-weight:600;background:color-mix(in srgb, var(--accent) 18%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);}
+
+
+
+/* 开关 */
+.sw{width:38px;height:21px;border-radius:11px;background:color-mix(in srgb, var(--face) 40%, #8a8f99);position:relative;cursor:pointer;flex:0 0 auto;transition:background .15s;}
+.sw i{position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.35);}
+.sw.on{background:var(--accent);}
+.sw.on i{left:19px;}
+
+body.style-win .sw i{display:none;}
+
+
+/* 滑杆 */
+.slider{display:flex;align-items:center;gap:10px;}
+.slider input[type=range]{flex:1;accent-color:var(--accent);height:20px;}
+
+.slider .val{font-size:11.5px;color:var(--tx-sub);min-width:58px;text-align:right;font-variant-numeric:tabular-nums;}
+.chips{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
+.chips button{font:inherit;font-size:11px;padding:4px 9px;border-radius:7px;border:1px solid var(--line);background:transparent;color:var(--tx-sub);cursor:pointer;}
+.chips button:hover{background:var(--hover);}
+
+
+/* 说明块 */
+.note{
+  font-size:11px;color:var(--tx-dim);line-height:1.6;padding:10px 12px;border-radius:10px;
+  background:color-mix(in srgb, var(--face) 40%, transparent);box-shadow:inset 0 0 0 1px var(--line);
+}
+
+.kv{display:flex;justify-content:space-between;font-size:12px;padding:9px 0;border-bottom:1px solid var(--line);}
+.kv:last-child{border-bottom:0;}
+.kv span:last-child{color:var(--tx-dim);}
+
+/* 底部按钮 */
+.footbar{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--line);flex:0 0 auto;}
+.footbar .ver{font-size:11px;color:var(--tx-dim);flex:1;}
+.btn{font:inherit;font-size:12.5px;padding:7px 16px;border-radius:8px;border:1px solid var(--line);background:color-mix(in srgb, var(--face) 55%, transparent);color:var(--tx);cursor:pointer;}
+.btn.primary{background:var(--accent);border-color:transparent;color:#fff;font-weight:600;}
+
+
+</style>
+</head>
+<body class="style-acrylic dark">
+
+<canvas id="wall"></canvas>
+
+<div id="stage">
+  <div class="win" id="win">
+    <div class="noise"></div>
+    <div class="glare"></div>
+
+    <div class="title" id="titlebar">
+      <div class="logo"></div>
+      <h1>灵云设置</h1>
+      <span class="badge" id="styleBadge">亚克力</span>
+      <div class="grow"></div>
+      <button class="tbtn" title="最小化">—</button>
+      <button class="tbtn" id="closeBtn" title="关闭">✕</button>
+    </div>
+
+    <div class="body">
+      <nav class="side">
+        <div class="tab on" data-pane="look">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="9.5" r="1.4"/><circle cx="15" cy="9.5" r="1.4"/><circle cx="9.5" cy="15" r="1.4"/></svg>
+          外观
+        </div>
+        <div class="tab" data-pane="layout">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 20V9"/></svg>
+          位置与大小
+        </div>
+        <div class="tab" data-pane="content">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+          显示内容
+        </div>
+        <div class="tab" data-pane="lyrics">
+          <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
+          歌词
+        </div>
+        <div class="tab" data-pane="about">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.2"/></svg>
+          关于
+        </div>
+        <div class="foot">界面材质：<b id="sideStyle">亚克力</b><br>切材质看左下角演示栏</div>
+      </nav>
+
+      <main class="content">
+        <!-- ================= 外观 ================= -->
+        <section class="pane on" id="pane-look">
+          <h2>外观</h2>
+          <p class="sub">决定岛和设置窗口的材质、配色与透明度。</p>
+
+          <div class="group">
+            <div class="glabel">界面材质</div>
+            <div class="card">
+              <div class="row col">
+                <div class="seg" id="matSeg">
+                  <button data-style="acrylic" class="on">亚克力</button>
+                  <button data-style="glass">液态玻璃</button>
+                  <button data-style="win">原生 Windows</button>
+                </div>
+                <div class="desc" id="matDesc">Win11 式模糊 + 噪点，最稳、最省；对壁纸不挑。</div>
+              </div>
+              <div class="row">
+                <span class="lab">跟随系统</span>
+                <div class="grow desc">材质浅深自动跟随 Windows 应用模式</div>
+                <div class="sw on" id="sw1"><i></i></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="glabel">主题</div>
+            <div class="card">
+              <div class="row col">
+                <div class="seg" id="themeSeg">
+                  <button class="on">深色</button><button>浅色</button><button>跟随系统</button>
+                </div>
+                <div class="desc">深色为纯黑 <b>#000000</b>（OLED 友好）；浅色是暖白面板。</div>
+              </div>
+              <div class="row">
+                <span class="lab">媒体页样式</span>
+                <div class="grow seg" id="styleSeg">
+                  <button class="on">A · 精修</button><button>B · 沉浸</button><button>C · 氛围</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="glabel">背景透明度</div>
+            <div class="card">
+              <div class="row col">
+                <div class="slider">
+                  <input type="range" id="opacity" min="40" max="100" value="100">
+                  <span class="val" id="opacityVal">100%</span>
+                </div>
+                <div class="chips">
+                  <button data-op="40">轻透 40%</button><button data-op="70">半透 70%</button><button data-op="100">不透明 100%</button>
+                </div>
+                <div class="desc">只压背景与材质，文字和强调色不变；三种材质都跟随。</div>
+              </div>
+              <div class="row">
+                <span class="lab">玻璃自适应</span>
+                <div class="grow desc">按岛背后桌面明暗自动切浅色/深色玻璃（每秒采样一次，约 0.5% 单核）</div>
+                <div class="sw on" id="sw2"><i></i></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= 位置与大小 ================= -->
+        <section class="pane" id="pane-layout">
+          <h2>位置与大小</h2>
+          <p class="sub">改动即时生效，不需要重启。</p>
+          <div class="group">
+            <div class="card">
+              <div class="row col">
+                <div class="slider"><input type="range" min="80" max="150" value="100"><span class="val">100%</span></div>
+                <div class="desc">胶囊大小（0.8×–1.5×）</div>
+              </div>
+              <div class="row col">
+                <div class="slider"><input type="range" min="95" max="125" value="100"><span class="val">100%</span></div>
+                <div class="desc">展开面板大小（0.95×–1.25×）</div>
+              </div>
+              <div class="row col">
+                <div class="slider"><input type="range" min="-280" max="280" value="0"><span class="val">居中</span></div>
+                <div class="desc">水平位置（相对工作区中心）</div>
+              </div>
+              <div class="row col">
+                <div class="slider"><input type="range" min="0" max="200" value="8"><span class="val">8 px</span></div>
+                <div class="desc">距顶部距离</div>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <div class="glabel">显示器</div>
+            <div class="card">
+              <div class="row">
+                <span class="lab">显示到</span>
+                <div class="grow seg"><button class="on">1 · 主显示器 2560×1440</button><button>2 · 副屏</button></div>
+              </div>
+              <div class="row"><div class="desc">换屏 / 改分辨率后岛会自动重新落位。</div></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= 显示内容 ================= -->
+        <section class="pane" id="pane-content">
+          <h2>显示内容</h2>
+          <p class="sub">紧凑胶囊里放什么、哪些页面出现。</p>
+          <div class="group">
+            <div class="card">
+              <div class="row">
+                <span class="lab">组合模式</span>
+                <div class="grow desc">胶囊里同屏显示时间 / 硬件 / 媒体，宽度按内容自动伸缩；定宽槽保证数字跳动时不抖</div>
+                <div class="sw on" id="sw3"><i></i></div>
+              </div>
+              <div class="row"><span class="lab"></span><div class="grow seg" id="modSeg"><button class="on">时间</button><button class="on">硬件占用</button><button class="on">媒体</button></div></div>
+              <div class="row">
+                <span class="lab">性能页网速</span>
+                <div class="grow desc">性能页显示实时下载 / 上传速度（每秒采样）</div>
+                <div class="sw on" id="sw4"><i></i></div>
+              </div>
+              <div class="row">
+                <span class="lab">系统通知</span>
+                <div class="grow desc">有通知时接管胶囊约 6 秒，点击唤醒对应应用（需在系统设置里允许通知访问）</div>
+                <div class="sw on" id="sw5"><i></i></div>
+              </div>
+              <div class="row">
+                <span class="lab">闲置自动隐藏</span>
+                <div class="grow desc">无媒体且鼠标离开 10 秒后收起；光标移到屏幕顶部即恢复</div>
+                <div class="sw" id="sw6"><i></i></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= 歌词 ================= -->
+        <section class="pane" id="pane-lyrics">
+          <h2>歌词</h2>
+          <p class="sub">展开媒体页的在线歌词（来源 LRCLIB，免费无需鉴权）。</p>
+          <div class="group">
+            <div class="card">
+              <div class="row">
+                <span class="lab">显示歌词</span>
+                <div class="grow desc">查不到 / 离线 / 接口异常都静默留空，不影响其他功能</div>
+                <div class="sw on" id="sw7"><i></i></div>
+              </div>
+              <div class="row">
+                <span class="lab">卡拉OK逐字</span>
+                <div class="grow desc">当前句按播放进度从左到右点亮；关掉则整句一个颜色</div>
+                <div class="sw on" id="sw8"><i></i></div>
+              </div>
+              <div class="row col">
+                <div class="slider"><input type="range" min="-2000" max="2000" value="0"><span class="val">不补偿</span></div>
+                <div class="desc">延迟补偿 ±2 秒（正 = 歌词提前），显示器 / 音频链路有延迟时校准</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= 关于 ================= -->
+        <section class="pane" id="pane-about">
+          <h2>关于</h2>
+          <p class="sub">灵云 —— Windows 顶部灵动岛。</p>
+          <div class="group">
+            <div class="card">
+              <div class="kv"><span>版本</span><span>v5.1.0（本地构建）</span></div>
+              <div class="kv"><span>界面材质</span><span id="aboutStyle">亚克力</span></div>
+              <div class="kv"><span>主题</span><span id="aboutTheme">深色</span></div>
+              <div class="kv"><span>配置</span><span>灵云配置.json（与 exe 同目录）</span></div>
+            </div>
+          </div>
+          <div class="group">
+            <div class="card">
+              <div class="row">
+                <span class="lab">开机自启</span>
+                <div class="grow desc">写入 HKCU Run，登录后自动运行</div>
+                <div class="sw" id="sw9"><i></i></div>
+              </div>
+              <div class="row">
+                <span class="lab">诊断</span>
+                <div class="grow desc">--self-test 契约断言 / --dump-frames 离屏出图 / --backdrop-probe 自适应探针</div>
+                <button class="btn">打开日志目录</button>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <div class="note">恢复默认会把材质、主题、透明度、大小、位置、组合模式、通知、歌词全部还原（自定义快捷程序与日程保留）。</div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="footbar">
+      <span class="ver">灵云 v5.1.0</span>
+      <button class="btn">恢复默认</button>
+      <button class="btn primary" id="doneBtn">完成</button>
+    </div>
+  </div>
+</div>
+
+<div id="demoBar">
+  <b>材质：</b>
+  <button data-style="acrylic" class="on">亚克力</button>
+  <button data-style="glass">液态玻璃</button>
+  <button data-style="win">原生 Windows</button>
+  <span class="sep"></span>
+  <b>明暗：</b>
+  <button id="btnDark" class="on">深色</button>
+  <button id="btnLight">浅色</button>
+  <span class="sep"></span>
+  <span class="hint">左侧分区可点击切换；窗口标题栏可拖动。三种材质是同一套 DOM，只换材质层。</span>
+</div>
+
+<script>
+/* ---------- 金属材质：液态玻璃的折射（同 design/liquid-glass-demo.html 的实现） ---------- */
+(function (global) {
+  "use strict";
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  let uid = 0, defs = null;
+  function ensureDefs() {
+    if (defs) return defs;
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("width", "0"); svg.setAttribute("height", "0");
+    svg.style.position = "absolute";
+    defs = document.createElementNS(SVG_NS, "defs");
+    svg.appendChild(defs); document.body.appendChild(svg);
+    return defs;
+  }
+  function makeMap(w, h, radius, border, mapBlur) {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    const gx = ctx.createLinearGradient(0, 0, w, 0);
+    gx.addColorStop(0, "rgb(0,0,0)"); gx.addColorStop(1, "rgb(255,0,0)");
+    ctx.fillStyle = gx; ctx.fillRect(0, 0, w, h);
+    const gy = ctx.createLinearGradient(0, 0, 0, h);
+    gy.addColorStop(0, "rgb(0,0,0)"); gy.addColorStop(1, "rgb(0,0,255)");
+    ctx.globalCompositeOperation = "difference";
+    ctx.fillStyle = gy; ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = "source-over";
+    const inset = border * Math.min(w, h);
+    ctx.filter = "blur(" + mapBlur + "px)";
+    ctx.fillStyle = "rgba(128,128,128,0.93)";
+    ctx.beginPath();
+    ctx.roundRect(inset, inset, w - inset * 2, h - inset * 2, Math.max(radius - inset, 2));
+    ctx.fill(); ctx.filter = "none";
+    return c.toDataURL();
+  }
+  function buildFilter(id, scales) {
+    const f = document.createElementNS(SVG_NS, "filter");
+    f.setAttribute("id", id);
+    f.setAttribute("x", "0"); f.setAttribute("y", "0");
+    f.setAttribute("width", "100%"); f.setAttribute("height", "100%");
+    f.setAttribute("color-interpolation-filters", "sRGB");   // 少了这行会有恒定幽灵位移
+    const img = document.createElementNS(SVG_NS, "feImage");
+    img.setAttribute("result", "map"); img.setAttribute("preserveAspectRatio", "none");
+    f.appendChild(img);
+    const keep = [
+      "1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0",
+      "0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0",
+      "0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0",
+    ];
+    const ch = [];
+    for (let i = 0; i < 3; i++) {
+      const d = document.createElementNS(SVG_NS, "feDisplacementMap");
+      d.setAttribute("in", "SourceGraphic"); d.setAttribute("in2", "map");
+      d.setAttribute("scale", scales[i]);
+      d.setAttribute("xChannelSelector", "R"); d.setAttribute("yChannelSelector", "B");
+      d.setAttribute("result", "d" + i);
+      f.appendChild(d);
+      const cm = document.createElementNS(SVG_NS, "feColorMatrix");
+      cm.setAttribute("in", "d" + i); cm.setAttribute("type", "matrix");
+      cm.setAttribute("values", keep[i]); cm.setAttribute("result", "c" + i);
+      f.appendChild(cm); ch.push("c" + i);
+    }
+    const b1 = document.createElementNS(SVG_NS, "feBlend");
+    b1.setAttribute("in", ch[0]); b1.setAttribute("in2", ch[1]);
+    b1.setAttribute("mode", "screen"); b1.setAttribute("result", "c01");
+    f.appendChild(b1);
+    const b2 = document.createElementNS(SVG_NS, "feBlend");
+    b2.setAttribute("in", "c01"); b2.setAttribute("in2", ch[2]); b2.setAttribute("mode", "screen");
+    f.appendChild(b2);
+    ensureDefs().appendChild(f);
+    return { filter: f, img: img };
+  }
+  function liquidGlass(el, opts) {
+    const o = Object.assign({ scale: -150, chroma: 8, border: 0.12, mapBlur: 16, blur: 2, saturate: 1.45 }, opts || {});
+    if (!CSS.supports("backdrop-filter", "url(#lg)")) {
+      el.style.backdropFilter = "blur(18px) saturate(1.3)";
+      return { supported: false, refresh() {} };
+    }
+    const id = "lg-" + (++uid);
+    const parts = buildFilter(id, [o.scale, o.scale + o.chroma, o.scale + 2 * o.chroma]);
+    function refresh() {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      if (!w || !h) return;
+      const r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+      parts.img.setAttribute("href", makeMap(w, h, r, o.border, o.mapBlur));
+      parts.img.setAttribute("width", w); parts.img.setAttribute("height", h);
+      el.style.backdropFilter = "url(#" + id + ") blur(" + o.blur + "px) saturate(" + o.saturate + ")";
+    }
+    refresh();
+    if (global.ResizeObserver) new ResizeObserver(refresh).observe(el);
+    return { supported: true, refresh };
+  }
+  global.liquidGlass = liquidGlass;
+})(window);
+
+/* ---------- 背景壁纸（有结构，才看得出模糊与折射的差别） ---------- */
+(function wall() {
+  const canvas = document.getElementById("wall");
+  const ctx = canvas.getContext("2d");
+  function paint() {
+    const w = canvas.width = innerWidth, h = canvas.height = innerHeight;
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, "#16253f"); sky.addColorStop(.4, "#4a3f66");
+    sky.addColorStop(.62, "#b96a58"); sky.addColorStop(1, "#1d1a24");
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
+    const sunX = w * .72, sunY = h * .44, sunR = Math.min(w, h) * .05;
+    const gl = ctx.createRadialGradient(sunX, sunY, sunR * .2, sunX, sunY, sunR * 5);
+    gl.addColorStop(0, "rgba(255,214,160,.85)"); gl.addColorStop(1, "rgba(255,180,120,0)");
+    ctx.fillStyle = gl; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#ffe6bc"; ctx.beginPath(); ctx.arc(sunX, sunY, sunR, 0, 7); ctx.fill();
+    ctx.globalAlpha = .5;
+    for (let i = 0; i < 12; i++) {
+      const y = h * .12 + i * h * .025, ww = w * (.3 + Math.random() * .7), x = Math.random() * w - ww * .3;
+      const c = ctx.createLinearGradient(x, 0, x + ww, 0);
+      c.addColorStop(0, "rgba(255,255,255,0)"); c.addColorStop(.5, "rgba(255,236,214,.5)");
+      c.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = c; ctx.fillRect(x, y, ww, h * .012);
+    }
+    ctx.globalAlpha = 1;
+    [["#2b3a52", .60, 3], ["#1e2a3d", .70, 7], ["#141c2a", .82, 11]].forEach(([col, base, seed]) => {
+      ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, h);
+      for (let x = 0; x <= w; x += 8) {
+        const t = x / w;
+        ctx.lineTo(x, h * base - Math.sin(t * 9 + seed) * h * .05
+          - Math.sin(t * 23 + seed * 2.3) * h * .02 - Math.sin(t * 47 + seed * 3.7) * h * .008);
+      }
+      ctx.lineTo(w, h); ctx.closePath(); ctx.fill();
+    });
+  }
+  paint();
+  addEventListener("resize", paint);
+})();
+
+/* ---------- 原型交互：材质切换 / 明暗 / 分区 / 开关 / 拖动 ---------- */
+(function () {
+  const win = document.getElementById("win");
+  const body = document.body;
+  const STYLE_NAME = { acrylic: "亚克力", glass: "液态玻璃", win: "原生 Windows" };
+  const MAT_DESC = {
+    acrylic: "Win11 式模糊 + 噪点，最稳、最省；对壁纸不挑。",
+    glass: "真折射：边缘把背后的桌面压弯，带镜面高光与色散；最花哨，也最挑性能。",
+    win: "不使用任何透明：纯色面板 + 1px 灰边 + 方角，走系统原生控件长相；最清晰，也最像老程序。",
+  };
+  let glass = null;
+
+  function applyStyle(style) {
+    body.classList.remove("style-acrylic", "style-glass", "style-win");
+    body.classList.add("style-" + style);
+    document.querySelectorAll("#demoBar [data-style],#matSeg [data-style]").forEach(b =>
+      b.classList.toggle("on", b.dataset.style === style));
+    document.getElementById("styleBadge").textContent = STYLE_NAME[style];
+    document.getElementById("sideStyle").textContent = STYLE_NAME[style];
+    document.getElementById("aboutStyle").textContent = STYLE_NAME[style];
+    document.getElementById("matDesc").textContent = MAT_DESC[style];
+
+    win.style.backdropFilter = "";
+    if (style === "glass") {
+      glass = liquidGlass(win, { scale: -150, chroma: 8, border: 0.12, mapBlur: 16, blur: 2, saturate: 1.45 });
+    } else if (style === "acrylic") {
+      glass = null;
+      win.style.backdropFilter = "blur(40px) saturate(1.35)";
+    } else {
+      glass = null;
+    }
+  }
+  document.querySelectorAll("#demoBar [data-style],#matSeg [data-style]").forEach(btn =>
+    btn.onclick = () => applyStyle(btn.dataset.style));
+
+  // 明暗
+  const btnDark = document.getElementById("btnDark"), btnLight = document.getElementById("btnLight");
+  function setLight(light) {
+    body.classList.toggle("light", light);
+    body.classList.toggle("dark", !light);
+    btnLight.classList.toggle("on", light);
+    btnDark.classList.toggle("on", !light);
+    document.getElementById("aboutTheme").textContent = light ? "浅色" : "深色";
+    document.getElementById("themeSeg").children[light ? 1 : 0].classList.add("on");
+    document.getElementById("themeSeg").children[light ? 0 : 1].classList.remove("on");
+    if (glass) setTimeout(() => glass.refresh(), 60);
+  }
+  btnLight.onclick = () => setLight(true);
+  btnDark.onclick = () => setLight(false);
+
+  // 左侧分区
+  document.querySelectorAll(".tab").forEach(tab => tab.onclick = () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t === tab));
+    document.querySelectorAll(".pane").forEach(p =>
+      p.classList.toggle("on", p.id === "pane-" + tab.dataset.pane));
+  });
+
+  // 分段选择（主题 / 媒体页样式 / 组合模式模块 / 显示器）
+  document.querySelectorAll(".seg").forEach(seg => {
+    if (seg.id === "matSeg") return;
+    seg.querySelectorAll("button").forEach(b => b.onclick = () => {
+      // 组合模式模块可多选，其余单选
+      if (seg.querySelectorAll("button").length === 3 && seg.closest("#pane-content")) {
+        b.classList.toggle("on");
+      } else {
+        seg.querySelectorAll("button").forEach(o => o.classList.toggle("on", o === b));
+      }
+    });
+  });
+
+  // 开关
+  document.querySelectorAll(".sw").forEach(sw => sw.onclick = () => {
+    if (body.classList.contains("style-win")) sw.classList.toggle("on");   // 原生风格里是勾选框
+    else sw.classList.toggle("on");
+  });
+
+  // 透明度滑杆 + 预设
+  const op = document.getElementById("opacity"), opVal = document.getElementById("opacityVal");
+  op.oninput = () => opVal.textContent = op.value + "%";
+  document.querySelectorAll("[data-op]").forEach(b => b.onclick = () => {
+    op.value = b.dataset.op; opVal.textContent = b.dataset.op + "%";
+  });
+
+  // 标题栏拖动
+  let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
+  const bar = document.getElementById("titlebar");
+  bar.style.cursor = "grab";
+  bar.addEventListener("pointerdown", e => {
+    drag = true; sx = e.clientX; sy = e.clientY;
+    const r = win.getBoundingClientRect(); ox = r.left; oy = r.top;
+    win.style.position = "fixed"; win.style.margin = "0";
+    bar.setPointerCapture(e.pointerId); bar.style.cursor = "grabbing";
+  });
+  bar.addEventListener("pointermove", e => {
+    if (!drag) return;
+    win.style.left = Math.max(0, Math.min(innerWidth - win.offsetWidth, ox + e.clientX - sx)) + "px";
+    win.style.top = Math.max(0, Math.min(innerHeight - win.offsetHeight, oy + e.clientY - sy)) + "px";
+  });
+  bar.addEventListener("pointerup", () => { drag = false; bar.style.cursor = "grab"; });
+
+  // hash： #glass,dark,layout 之类，方便对照截图
+  {
+    const t = decodeURIComponent(location.hash.replace(/^#/, "")).split(",").map(s => s.trim()).filter(Boolean);
+    const st = t.find(x => ["acrylic", "glass", "win"].includes(x));
+    if (st) applyStyle(st); else applyStyle("acrylic");
+    setLight(t.includes("light"));
+    const pane = t.find(x => ["look", "layout", "content", "lyrics", "about"].includes(x));
+    if (pane) document.querySelector(`.tab[data-pane="${pane}"]`).click();
+  }
+})();
+</script>
+</body>
+</html>
