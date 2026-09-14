@@ -8,7 +8,7 @@ using Windows.Devices.Geolocation;
 namespace LingYun.Services;
 
 public sealed record PerfMetrics(double Cpu, double MemPct, double MemUsedGb, double MemTotalGb,
-    double NetKbps, double DiskReadKbps, double UploadKbps);
+    double NetKbps, double DiskReadKbps, double UploadKbps, double UptimeSeconds);
 
 public sealed class PerfSampler : IDisposable
 {
@@ -61,7 +61,8 @@ public sealed class PerfSampler : IDisposable
         _prevNetSent = netSent;
         _prevNetAt = now;
 
-        Metrics?.Invoke(new PerfMetrics(cpu, memPct, usedGb, totalGb, netKbps, 0, uploadKbps));
+        Metrics?.Invoke(new PerfMetrics(cpu, memPct, usedGb, totalGb, netKbps, 0, uploadKbps,
+            Math.Max(0, Environment.TickCount64 / 1000.0)));
     }
 
     /// <summary>按 GetSystemTimes 语义计算 CPU：kernel 已包含 idle，故总时间为 kernel + user。</summary>

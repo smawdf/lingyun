@@ -3245,7 +3245,7 @@ public sealed class NativeIslandApp : IDisposable
             DrawNetworkCard(canvas, layout.Minis[i++], s, m.NetKbps, m.UploadKbps);
         }
         DrawMiniCard(canvas, layout.Minis[i++], s, "磁盘读", FmtRate(m.DiskReadKbps));
-        DrawMiniCard(canvas, layout.Minis[i], s, "开机时长", "—");
+        DrawMiniCard(canvas, layout.Minis[i], s, "开机时长", FmtUptime(m.UptimeSeconds));
     }
 
     internal readonly record struct PerfLayoutRects(SKRect Cpu, SKRect Memory, SKRect[] Minis);
@@ -3288,6 +3288,18 @@ public sealed class NativeIslandApp : IDisposable
     {
         if (double.IsNaN(kbps) || double.IsInfinity(kbps) || kbps < 0) kbps = 0;
         return kbps >= 1024 ? $"{kbps / 1024:0.0} MB/s" : $"{kbps:0} KB/s";
+    }
+
+    internal static string FmtUptime(double seconds)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0) seconds = 0;
+        long totalMinutes = (long)Math.Floor(seconds / 60);
+        long days = totalMinutes / (24 * 60);
+        long hours = totalMinutes / 60 % 24;
+        long minutes = totalMinutes % 60;
+        if (days > 0) return $"{days}天 {hours}小时";
+        if (hours > 0) return $"{hours}小时 {minutes}分";
+        return $"{minutes}分";
     }
 
     /// <summary>圆环卡（207×165）：轨道 + 同色辉光弧 + 环心数值 + 卡底标签。位置按 HTML 实测。</summary>

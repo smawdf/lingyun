@@ -506,7 +506,7 @@ internal static class Diag
         };
         var appPages = new NativeIslandApp(pagesCfg, media3);
         appPages.InjectData(
-            new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0),
+            new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600),
             new WeatherInfo("深圳", 28.4, "多云", true, Hourly: new (int, double, double)[]
             {
                 (13, 28.4, 2), (14, 30, 2), (15, 31, 3), (16, 29, 2), (17, 27, 1),
@@ -688,7 +688,7 @@ internal static class Diag
                     PositionMs = 65_000,
                     DurationMs = 210_000,
                 });
-                appComp.InjectData(new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0));
+                appComp.InjectData(new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600));
                 appComp.InjectLyrics(LyricsService.ParseLrc(
                     "[00:00.00]词：黄俊郎\n[00:10.00]一群嗜血的蚂蚁 被腐肉所吸引\n" +
                     "[01:05.00]我面无表情 看孤独的风景\n[01:20.00]失去你 爱恨开始分明\n"));
@@ -699,7 +699,7 @@ internal static class Diag
             // 组合模式只有时间 + 硬件（无媒体会话）：宽度应比三模块窄一截
             ("compact-composite-static", () =>
             {
-                appCompStatic.InjectData(new PerfMetrics(12.0, 48.0, 7.6, 15.9, 12.0, 0, 3.0));
+                appCompStatic.InjectData(new PerfMetrics(12.0, 48.0, 7.6, 15.9, 12.0, 0, 3.0, 172800));
                 appCompStatic.ForceFocus("timer");
                 appCompStatic.ForceMode("compact");
             }),
@@ -716,7 +716,7 @@ internal static class Diag
                     PositionMs = 65_000,
                     DurationMs = 210_000,
                 });
-                appCompBig.InjectData(new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0));
+                appCompBig.InjectData(new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600));
                 appCompBig.InjectLyrics(LyricsService.ParseLrc(
                     "[00:00.00]词：黄俊郎\n[00:10.00]一群嗜血的蚂蚁 被腐肉所吸引\n" +
                     "[01:05.00]我面无表情 看孤独的风景\n"));
@@ -1246,6 +1246,13 @@ internal static class Diag
             && NativeIslandApp.FmtRate(1024) == "1.0 MB/s"
             && NativeIslandApp.FmtRate(-1) == "0 KB/s"
             && NativeIslandApp.FmtRate(double.NaN) == "0 KB/s");
+        Check("性能页开机时长格式：分钟/小时/天和非法值",
+            NativeIslandApp.FmtUptime(0) == "0分"
+            && NativeIslandApp.FmtUptime(3599) == "59分"
+            && NativeIslandApp.FmtUptime(3600) == "1小时 0分"
+            && NativeIslandApp.FmtUptime(90000) == "1天 1小时"
+            && NativeIslandApp.FmtUptime(-1) == "0分"
+            && NativeIslandApp.FmtUptime(double.NaN) == "0分");
         var perfBody = new SkiaSharp.SKRect(0, 0, 424, 229);
         var perfOn = NativeIslandApp.PerfLayout(perfBody, 1, true);
         var perfOff = NativeIslandApp.PerfLayout(perfBody, 1, false);

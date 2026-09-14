@@ -146,7 +146,7 @@ public sealed class ExpandedPages : StackPanel
 
         _perf.Metrics += m => Application.Current?.Dispatcher.Invoke(() =>
         {
-            _perfText.Text = $"CPU  {m.Cpu:0.0}%\n内存 {m.MemPct:0.0}%  ({m.MemUsedGb:0.0}/{m.MemTotalGb:0.0} GB)\n下载 {m.NetKbps:0} KB/s\n上传 {m.UploadKbps:0} KB/s";
+            _perfText.Text = $"CPU  {m.Cpu:0.0}%\n内存 {m.MemPct:0.0}%  ({m.MemUsedGb:0.0}/{m.MemTotalGb:0.0} GB)\n下载 {m.NetKbps:0} KB/s\n上传 {m.UploadKbps:0} KB/s\n开机 {NativeIslandApp.FmtUptime(m.UptimeSeconds)}";
         });
         _weather.Updated += w => Application.Current?.Dispatcher.Invoke(() =>
         {
