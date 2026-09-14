@@ -177,8 +177,9 @@ public sealed class SettingsWindow : Window
         {
             PlaceBelowIsland();
             UpdatePanelClip();
-            if (WindowMaterial.NeedsRegion(MaterialFor(_cfg.Theme)))
-                WindowMaterial.ApplyRoundedRegion(this, WindowMaterial.Radius(MaterialFor(_cfg.Theme)));
+            string m = MaterialFor(_cfg.Theme);
+            WindowMaterial.ApplyRoundedRegion(this,
+                WindowMaterial.NeedsRegion(m) ? WindowMaterial.Radius(m) : 0);
         };
         Loaded += (_, _) =>
         {
@@ -741,10 +742,11 @@ public sealed class SettingsWindow : Window
         if (_ready || IsInitialized)
         {
             WindowMaterial.ApplyWindowChrome(this, _dark, material);
-            // 只有亚克力需要裁窗口区域（系统模糊铺满整矩形）；玻璃的圆角由我们自己画，
-            // 再裁一层 GDI 区域反而会多出一道锯齿弧（用户看到的"四角弧线"）
-            if (WindowMaterial.NeedsRegion(material))
-                WindowMaterial.ApplyRoundedRegion(this, radius);
+            // 亚克力需要裁窗口区域（系统模糊铺满整矩形）；玻璃的圆角由我们自己画。
+            // 注意：**不需要区域时也必须调用一次（半径 0）把旧区域清掉**——
+            // 否则从亚克力切到玻璃后，系统里那个 10px 锯齿区域还留着，
+            // 而面板画的是 20px 圆角，两者错位就在四角露出方角块（用户截图里的红框）
+            WindowMaterial.ApplyRoundedRegion(this, WindowMaterial.NeedsRegion(material) ? radius : 0);
             string effective = WindowMaterial.ResolveBackdrop(Environment.OSVersion.Version.Build, material);
             _materialHint.Text = material switch
             {
