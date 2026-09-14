@@ -105,6 +105,10 @@ public sealed class NativeIslandApp : IDisposable
     private bool _glassDark;                 // 自适应结果：当前用深色玻璃（白字）
     private bool? _glassOverride;            // 诊断强制指定；null = 交回自适应
     private double _backdropLum = double.NaN;
+    private readonly double[] _lumHist = { double.NaN, double.NaN, double.NaN };
+    private int _lumHistIdx;
+    private bool _glassPending;
+    private int _glassPendingCount;
     private double _glassContrast = double.NaN;
     private DateTime _nextBackdropAt = DateTime.MinValue;
     private const double BackdropIntervalMs = 1000;   // 每秒采一次：一次 5.5ms ≈ 0.5% 单核（实测）
@@ -1660,15 +1664,55 @@ public sealed class NativeIslandApp : IDisposable
             new Services.SampleRect(_shellX + ix - 22, _shellY + iy - 22, iw + 44, ih + 44));
         if (sample is not { } s || !s.Known) return;            // 抓不到就保持当前材质，不自作主张
         _backdropLum = s.Luminance;
-        // 最亮分区代表"最不利的区域"：平均亮度会被大片暗色稀释，只看平均会漏掉半明半暗的壁纸
-        bool dark = IslandPalette.PreferDarkGlass(
-            new SKColor(s.R, s.G, s.B), _cfg.Opacity, _glassDark, out _glassContrast);
+        // 精细一点：单帧亮度会抖动（滚动网页、播放视频），先取最近三次的**中值**再判断
+        _lumHist[_lumHistIdx % 3] = s.Luminance;
+        _lumHistIdx++;
+        double smooth = Median3(_lumHist[0], _lumHist[1], _lumHist[2]);
+        _backdropLum = smooth;
+        var mean = new SKColor(s.R, s.G, s.B);
+        bool dark = IslandPalette.PreferDarkGlass(mean, _cfg.Opacity, _glassDark, out _glassContrast);
         if (s.BrightestCell > 0.82 && _cfg.Opacity < 70) dark = false;   // 有很亮的区域且玻璃薄：浅材质更稳
-        if (dark != _glassDark)
+
+        // 要连续两次得出同一结论才真的换（迟滞之外再加一层驻留，避免临界处闪烁）
+        if (dark == _glassDark)
         {
-            _glassDark = dark;
-            _palCache = null;                                    // 立刻换色，不等缓存过期
+            _glassPendingCount = 0;                      // 已经一致，撤销待定
         }
+        else if (dark == _glassPending)
+        {
+            _glassPendingCount++;
+            if (_glassPendingCount >= 2)
+            {
+                _glassDark = dark;
+                _glassPendingCount = 0;
+                _palCache = null;                        // 立刻换色，不等缓存过期
+            }
+        }
+        else
+        {
+            _glassPending = dark;                        // 第一次出现相反结论：先记下
+            _glassPendingCount = 1;
+        }
+    }
+
+    /// <summary>三次采样的中值（去掉单帧尖峰）。纯函数，自测钉住。</summary>
+    internal static double Median3(double a, double b, double c)
+        => Math.Max(Math.Min(a, b), Math.Min(Math.Max(a, b), c));
+
+    /// <summary>
+    /// 自适应换色的驻留判定（纯函数，自测用）：结论与当前不同、且连续 need 次都一样才换。
+    /// 返回 (立刻切换?, 新的待定值, 新的计数)。
+    /// </summary>
+    internal static (bool Apply, bool Pending, int Count) GlassFlipStep(
+        bool want, bool current, bool pending, int count, int need = 2)
+    {
+        if (want == current) return (false, pending, 0);
+        if (want == pending)
+        {
+            int next = count + 1;
+            return (next >= need, want, next >= need ? 0 : next);
+        }
+        return (false, want, 1);
     }
 
     /// <summary>诊断用：最近一次背景采样与自适应结论。</summary>

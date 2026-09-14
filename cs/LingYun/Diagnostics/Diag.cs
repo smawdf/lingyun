@@ -2134,6 +2134,22 @@ internal static class Diag
                     $"left={ch3.Seek.Left - panel.Left:0} right={panel.Right - ch3.Seek.Right:0}");
             }
             // 置顶层级（用户要的选项）：always / normal / auto（前台全屏让位）
+            Check("自适应换色：三次采样取中值（单帧尖峰不参与判断）",
+                Math.Abs(NativeIslandApp.Median3(0.9, 0.2, 0.3) - 0.3) < 1e-9
+                && Math.Abs(NativeIslandApp.Median3(0.1, 0.7, 0.2) - 0.2) < 1e-9
+                && Math.Abs(NativeIslandApp.Median3(0.5, 0.5, 0.5) - 0.5) < 1e-9);
+            {
+                // 驻留：要连续两次同一结论才换材质（临界处不闪）
+                var one = NativeIslandApp.GlassFlipStep(true, false, false, 0);
+                var two = NativeIslandApp.GlassFlipStep(true, false, one.Pending, one.Count);
+                var same = NativeIslandApp.GlassFlipStep(false, false, true, 1);
+                var back = NativeIslandApp.GlassFlipStep(true, true, false, 0);
+                Check("自适应换色：连续两次一致才翻，回到一致就撤销待定",
+                    !one.Apply && one.Pending && one.Count == 1
+                    && two.Apply && two.Count == 0
+                    && !same.Apply && same.Count == 0
+                    && !back.Apply && back.Count == 0);
+            }
             Check("置顶层级：always 恒置顶、normal 不置顶、auto 全屏让位",
                 NativeIslandApp.EffectiveTopmost("always", false, false)
                 && NativeIslandApp.EffectiveTopmost("always", false, true)

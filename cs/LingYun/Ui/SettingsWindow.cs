@@ -243,7 +243,8 @@ public sealed class SettingsWindow : Window
         done.FontWeight = FontWeights.SemiBold;
         done.Background = _accent;
         done.Foreground = Brushes.White;
-        done.BorderThickness = new Thickness(0);
+        done.BorderThickness = new Thickness(1);     // 用户要求：完成按钮要有框线
+        done.BorderBrush = _accentEdge;
         done.Click += (_, _) => Close();
         Grid.SetColumn(done, 2);
         footer.Children.Add(version);
@@ -811,6 +812,8 @@ public sealed class SettingsWindow : Window
         press.Setters.Add(new Setter(UIElement.OpacityProperty, 0.72, "bd"));
         template.Triggers.Add(press);
         style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        // 默认按钮还会画一圈"焦点虚线框"（点过之后一直留着），自定义模板后它非常突兀
+        style.Setters.Add(new Setter(Control.FocusVisualStyleProperty, null));
         return style;
     }
 
@@ -833,6 +836,7 @@ public sealed class SettingsWindow : Window
         hover.Setters.Add(new Setter(UIElement.OpacityProperty, 0.85, "bd"));
         template.Triggers.Add(hover);
         style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        style.Setters.Add(new Setter(Control.FocusVisualStyleProperty, null));
         return style;
     }
 
@@ -1196,5 +1200,7 @@ public sealed class SettingsWindow : Window
     private static Slider NewSlider(double min, double max) => new()
     {
         Minimum = min, Maximum = max, SmallChange = 1, LargeChange = 10,
+        // 点哪到哪（WPF 默认点轨道是"加减一个固定步长"，用户反馈"点一下直接缩放固定值"）
+        IsMoveToPointEnabled = true,
     };
 }
