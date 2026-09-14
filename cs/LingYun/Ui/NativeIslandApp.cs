@@ -150,7 +150,9 @@ public sealed class NativeIslandApp : IDisposable
     {
         get
         {
-            if (MediaStyleKey != "c") return Pal.Accent;
+            // b 沉浸：背景就是封面糊出来的，进度条/频谱要用同一套取色才协调；
+            // a 精修保留调色板强调色（否则 a 和 c 看着几乎一样）
+            if (MediaStyleKey == "a") return Pal.Accent;
             EnsureVibColors();
             _vibA.ToHsv(out float h, out float sat, out float val);
             return Pal.Dark
@@ -608,6 +610,37 @@ public sealed class NativeIslandApp : IDisposable
     private static double OutExpo(double t) => t >= 1 ? 1 : 1 - Math.Pow(2, -10 * t);
 
     /// <summary>
+    /// 拖动进度条：更新本地预览位置（不立刻 seek，松手才提交）。
+    /// 为什么要有本地预览：暂停状态下很多播放器不更新 SMTC 的 Position，
+    /// 只发 seek 的话界面会"弹回原位"，用户感觉是"拖不动"。
+    /// </summary>
+    private void UpdateSeekDrag(int x, MediaChrome ch)
+    {
+        if (_media.State.DurationMs <= 0) return;
+        double p = Math.Clamp((x - ch.Seek.Left) / ch.Seek.Width, 0, 1);
+        _seekPreviewMs = (long)(p * _media.State.DurationMs);
+    }
+
+    /// <summary>绘制用的播放位置：拖动中（或刚松手 1.5 秒内）用本地预览，其余用服务端位置。</summary>
+    private long DisplayPositionMs
+    {
+        get
+        {
+            if (_seekPreviewMs is { } p)
+            {
+                bool fresh = _seekPreviewAt is { } at && (DateTime.UtcNow - at).TotalSeconds < 1.5;
+                bool close = Math.Abs(p - _media.State.PositionMs) < 1500;
+                if (_seekDrag || (fresh && !close)) return p;
+            }
+            return _media.State.PositionMs;
+        }
+    }
+
+    private bool _seekDrag;
+    private long? _seekPreviewMs;
+    private DateTime? _seekPreviewAt;
+
+    /// <summary>
     /// 展开态是否该自动回缩（纯函数，自测用）：
     /// 配置为 0 表示关闭；鼠标还在岛上（或 WM_MOUSELEAVE 抖动导致 hover=false 但光标其实还在岛上）不收。
     /// 以前只看 hover 标志，分层窗重绘时会偶发 WM_MOUSELEAVE，鼠标没动面板却缩了。
@@ -684,6 +717,12 @@ public sealed class NativeIslandApp : IDisposable
     {
         _hover = true;
         _leftAt = null;
+        if (_seekDrag)
+        {
+            var (ix2, iy2, iw2, ih2) = Island();
+            UpdateSeekDrag(x, ChromeFor(new SKRect(ix2, iy2, ix2 + iw2, iy2 + ih2), _lastScale));
+            return;   // 拖动进度条时不触发别的命中逻辑
+        }
         // 展开「快捷」页长按危险动作时，指针滑出原按钮 → 立刻取消，避免"按住后划走"仍触发
         if (_pressIdx >= 0 && _page == QuickPageIndex
             && !ActionHit(x, y, _pressIdx, out _, out _))
@@ -729,6 +768,14 @@ public sealed class NativeIslandApp : IDisposable
     /// 其余一律当误触，什么都不做，只给一行提示告诉用户怎么才能执行。</summary>
     private void OnUp(int x, int y)
     {
+        if (_seekDrag)
+        {
+            _seekDrag = false;
+            long target = _seekPreviewMs ?? 0;
+            _seekPreviewAt = DateTime.UtcNow;
+            _ = _media.SeekAsync(target);
+            return;
+        }
         int idx = _pressIdx;
         if (idx < 0) return;
         double held = (DateTime.UtcNow - _pressAt).TotalMilliseconds;
@@ -985,11 +1032,13 @@ public sealed class NativeIslandApp : IDisposable
                     Retarget();
                     return;
                 }
-                // 进度条：点按定位（与绘制同一条轨道）
-                if (_media.State.DurationMs > 0 && ch.Seek.Contains((float)x, (float)y))
+                // 进度条：按住拖动定位（命中区上下各放宽 10px，条本身才 4px 高）
+                var seekHit = new SKRect(ch.Seek.Left, ch.Seek.Top - 10, ch.Seek.Right, ch.Seek.Bottom + 10);
+                if (_media.State.DurationMs > 0 && seekHit.Contains((float)x, (float)y))
                 {
-                    double p = Math.Clamp((x - ch.Seek.Left) / ch.Seek.Width, 0, 1);
-                    _ = _media.SeekAsync((long)(p * _media.State.DurationMs));
+                    _seekDrag = true;
+                    _media.BeginSeek();
+                    UpdateSeekDrag(x, ch);
                     return;
                 }
                 // 来源切换 chip：多个会话时点一下切下一个
@@ -2546,7 +2595,7 @@ public sealed class NativeIslandApp : IDisposable
         using (var tp = new SKPaint { Color = Pal.Track, IsAntialias = true })
             canvas.DrawRoundRect(track, 2 * s, 2 * s, tp);
         if (st.DurationMs <= 0) return;
-        float p = (float)Math.Min(1, st.PositionMs / (double)st.DurationMs);
+        float p = (float)Math.Min(1, DisplayPositionMs / (double)st.DurationMs);
         SKColor[] grad = MediaStyleKey == "b"
             ? new[] { Pal.Fg, Pal.Fg }
             : Pal.Dark
@@ -2573,9 +2622,10 @@ public sealed class NativeIslandApp : IDisposable
         var st = _media.State;
         if (st.DurationMs <= 0) return;
         // 已播时间贴条左、总时长贴条右，和进度条同一行（用户给的参考形态）
-        DrawText(canvas, Fmt(st.PositionMs), ch.Seek.Left - 56 * s, ch.Seek.MidY + 4 * s, 11.5f * s, Pal.Sub);
+        DrawText(canvas, Fmt(DisplayPositionMs), ch.Seek.Left - 10 * s - MeasureText(Fmt(DisplayPositionMs), 11.5f * s),
+            ch.Seek.MidY + 4 * s, 11.5f * s, Pal.Sub);
         string total = Fmt(st.DurationMs);
-        DrawText(canvas, total, ch.Seek.Right + 56 * s - MeasureText(total, 11.5f * s),
+        DrawText(canvas, total, ch.Seek.Right + 10 * s,
             ch.Seek.MidY + 4 * s, 11.5f * s, Pal.Dim);
     }
 
