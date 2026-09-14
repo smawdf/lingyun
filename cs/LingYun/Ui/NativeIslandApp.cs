@@ -636,6 +636,8 @@ public sealed class NativeIslandApp : IDisposable
         }
     }
 
+    private bool _volPopup;      // 音量竖向弹出条是否展开
+    private bool _volDrag;       // 正在拖动音量
     private bool _seekDrag;
     private long? _seekPreviewMs;
     private DateTime? _seekPreviewAt;
@@ -717,6 +719,16 @@ public sealed class NativeIslandApp : IDisposable
     {
         _hover = true;
         _leftAt = null;
+        if (_volDrag)
+        {
+            if (_volumeSvc is { Available: true } v2)
+            {
+                var (ix3, iy3, iw3, ih3) = Island();
+                var ch3 = ChromeFor(new SKRect(ix3, iy3, ix3 + iw3, iy3 + ih3), _lastScale);
+                v2.SetVolume((float)VolumeFromY(VolumeGroove(ch3.VolTrack, _lastScale), y));
+            }
+            return;
+        }
         if (_seekDrag)
         {
             var (ix2, iy2, iw2, ih2) = Island();
@@ -768,6 +780,11 @@ public sealed class NativeIslandApp : IDisposable
     /// 其余一律当误触，什么都不做，只给一行提示告诉用户怎么才能执行。</summary>
     private void OnUp(int x, int y)
     {
+        if (_volDrag)
+        {
+            _volDrag = false;
+            return;
+        }
         if (_seekDrag)
         {
             _seekDrag = false;
@@ -1047,21 +1064,37 @@ public sealed class NativeIslandApp : IDisposable
                     _media.CycleSession(1);
                     return;
                 }
-                // 音量：点喇叭切静音；点轨道直接定位
+                // 音量：点喇叭**只弹出竖向调节条**（用户要求：更符合直觉，不再常驻横条）；
+                // 弹出条顶部是静音开关，下面是竖槽（按住可拖）
                 if (_volumeSvc is { } vol && vol.Available)
                 {
                     if (ch.VolGlyph.Contains((float)x, (float)y))
                     {
-                        vol.ToggleMute();
+                        _volPopup = !_volPopup;
                         return;
                     }
-                    var vTrack = ch.VolTrack;
-                    if (y >= vTrack.Top - 8 && y <= vTrack.Bottom + 8 && x >= vTrack.Left - 6 && x <= vTrack.Right + 6)
+                    if (_volPopup)
                     {
-                        double v = Math.Clamp((x - vTrack.Left) / vTrack.Width, 0, 1);
-                        vol.SetVolume((float)v);
-                        return;
+                        if (VolumeMuteRect(ch.VolTrack, _lastScale).Contains((float)x, (float)y))
+                        {
+                            vol.ToggleMute();
+                            return;
+                        }
+                        var groove = VolumeGroove(ch.VolTrack, _lastScale);
+                        if (x >= groove.Left - 10 * _lastScale && x <= groove.Right + 10 * _lastScale
+                            && y >= ch.VolTrack.Top && y <= ch.VolTrack.Bottom)
+                        {
+                            _volDrag = true;
+                            vol.SetVolume((float)VolumeFromY(groove, y));
+                            return;
+                        }
                     }
+                }
+                // 弹出条开着时点别处：先收起它，不顺手把整个面板也收掉（避免误操作）
+                if (_volPopup)
+                {
+                    _volPopup = false;
+                    return;
                 }
                 // 封面/标题：跳源窗口——走与通知点击同一条三级激活链
                 // （WinRT 包激活 → COM → 进程前台化 → 窗口标题模糊匹配），
@@ -1734,6 +1767,9 @@ public sealed class NativeIslandApp : IDisposable
     /// </summary>
     internal void InjectSpectrum(float[]? bands) => _spectrumOverride = bands;
 
+    /// <summary>离屏渲染用：把音量竖向弹出条摆成展开态（诊断出图）。</summary>
+    internal void ForceVolumePopup(bool open) => _volPopup = open;
+
     /// <summary>离屏渲染用：注入假音量行（level=null 恢复读真实设备）。</summary>
     internal void InjectVolume(float? level, bool muted = false)
         => _volumeOverride = level is null ? null : (level.Value, muted);
@@ -2202,7 +2238,7 @@ public sealed class NativeIslandApp : IDisposable
                     BgBar: bar,
                     Home: new SKRect(r.MidX - 38 * s, barCy - 13 * s, r.MidX + 38 * s, barCy + 13 * s),
                     VolGlyph: new SKRect(R - 136 * s, barCy - 12 * s, R - 112 * s, barCy + 12 * s),
-                    VolTrack: new SKRect(R - 104 * s, barCy - 2 * s, R - 34 * s, barCy + 2 * s),
+                    VolTrack: VolumePopup(new SKRect(R - 136 * s, barCy - 12 * s, R - 112 * s, barCy + 12 * s), s),
                     Prev: new SKRect(L + 30 * s, barCy - 15 * s, L + 60 * s, barCy + 15 * s),
                     Play: new SKRect(L + 62 * s, barCy - 19 * s, L + 100 * s, barCy + 19 * s),
                     Next: new SKRect(L + 102 * s, barCy - 15 * s, L + 132 * s, barCy + 15 * s),
@@ -2222,7 +2258,7 @@ public sealed class NativeIslandApp : IDisposable
                     BgBar: SKRect.Empty,
                     Home: new SKRect(L + 22 * s, B - 46 * s, L + 98 * s, B - 20 * s),
                     VolGlyph: new SKRect(L + 306 * s, B - 42 * s, L + 330 * s, B - 18 * s),
-                    VolTrack: new SKRect(L + 338 * s, B - 29 * s, R - 26 * s, B - 25 * s),
+                    VolTrack: VolumePopup(new SKRect(L + 306 * s, B - 42 * s, L + 330 * s, B - 18 * s), s),
                     Prev: new SKRect(L + 149 * s, B - 57 * s, L + 183 * s, B - 23 * s),
                     Play: new SKRect(L + 208 * s, B - 62 * s, L + 252 * s, B - 18 * s),
                     Next: new SKRect(L + 277 * s, B - 57 * s, L + 311 * s, B - 23 * s),
@@ -2242,7 +2278,7 @@ public sealed class NativeIslandApp : IDisposable
                     BgBar: SKRect.Empty,
                     Home: PanelSwitchRect(r, s),   // 位置沿用旧「⌂ 面板」矩形（诊断冒烟测试也用它）
                     VolGlyph: new SKRect(L + 308 * s, B - 40 * s, L + 332 * s, B - 16 * s),
-                    VolTrack: new SKRect(L + 340 * s, B - 29 * s, R - 26 * s, B - 25 * s),
+                    VolTrack: VolumePopup(new SKRect(L + 308 * s, B - 40 * s, L + 332 * s, B - 16 * s), s),
                     Prev: new SKRect(L + 143 * s, B - 61 * s, L + 177 * s, B - 27 * s),
                     Play: new SKRect(L + 201 * s, B - 67 * s, L + 247 * s, B - 21 * s),
                     Next: new SKRect(L + 271 * s, B - 61 * s, L + 305 * s, B - 27 * s),
@@ -2250,6 +2286,25 @@ public sealed class NativeIslandApp : IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// 音量竖向弹出条的命中矩形（画在喇叭图标正上方）。
+    /// 点击图标只弹出它，不再常驻一条横向长条——顶部 28 是静音开关，下面是竖槽。
+    /// </summary>
+    internal static SKRect VolumePopup(SKRect glyph, float s)
+        => new(glyph.MidX - 20 * s, glyph.Top - 136 * s, glyph.MidX + 20 * s, glyph.Top - 6 * s);
+
+    /// <summary>竖槽（弹出条内部，去掉顶部静音行与内边距）。</summary>
+    internal static SKRect VolumeGroove(SKRect popup, float s)
+        => new(popup.MidX - 3 * s, popup.Top + 34 * s, popup.MidX + 3 * s, popup.Bottom - 12 * s);
+
+    /// <summary>静音开关的命中区（弹出条顶部一行）。</summary>
+    internal static SKRect VolumeMuteRect(SKRect popup, float s)
+        => new(popup.Left, popup.Top, popup.Right, popup.Top + 28 * s);
+
+    /// <summary>按点击的纵向位置换算音量（0..1，顶部 = 1）。纯函数，自测钉住。</summary>
+    internal static double VolumeFromY(SKRect groove, double y)
+        => Math.Clamp((groove.Bottom - y) / Math.Max(1, groove.Height), 0, 1);
 
     /// <summary>来源切换 chip（左锚点）。会话 &lt;2 时返回 Empty（不画也不命中）。</summary>
     private SKRect ChipAt(float x, float y, float h, float s)
@@ -2591,9 +2646,9 @@ public sealed class NativeIslandApp : IDisposable
     {
         var st = _media.State;
         float ty = ch.Seek.MidY;
-        var track = new SKRect(ch.Seek.Left, ty - 2 * s, ch.Seek.Right, ty + 2 * s);
+        var track = new SKRect(ch.Seek.Left, ty - 3 * s, ch.Seek.Right, ty + 3 * s);   // 6px：用户要求稍微加宽
         using (var tp = new SKPaint { Color = Pal.Track, IsAntialias = true })
-            canvas.DrawRoundRect(track, 2 * s, 2 * s, tp);
+            canvas.DrawRoundRect(track, 3 * s, 3 * s, tp);
         if (st.DurationMs <= 0) return;
         float p = (float)Math.Min(1, DisplayPositionMs / (double)st.DurationMs);
         SKColor[] grad = MediaStyleKey == "b"
@@ -2611,7 +2666,7 @@ public sealed class NativeIslandApp : IDisposable
                     new SKPoint(track.Left, 0), new SKPoint(track.Left + fillW, 0),
                     grad, new float[] { 0f, 1f }, SKShaderTileMode.Clamp),
             };
-            canvas.DrawRoundRect(new SKRect(track.Left, track.Top, track.Left + fillW, track.Bottom), 2 * s, 2 * s, fp);
+            canvas.DrawRoundRect(new SKRect(track.Left, track.Top, track.Left + fillW, track.Bottom), 3 * s, 3 * s, fp);
         }
         // 不要进度点（用户要求）：只留细条本身的填充
     }
@@ -2742,17 +2797,30 @@ public sealed class NativeIslandApp : IDisposable
         }
 
         var glyph = ch.VolGlyph;
-        DrawText(canvas, muted ? "🔇" : "🔊", glyph.Left, glyph.MidY + 5 * s, 13 * s, Pal.Sub);
+        DrawText(canvas, muted ? "🔇" : "🔊", glyph.Left, glyph.MidY + 5 * s, 13 * s,
+            _volPopup ? Pal.Fg : Pal.Sub);
+        if (!_volPopup) return;   // 弹出条只在点开时画
 
-        var track = ch.VolTrack;
+        var popup = ch.VolTrack;
+        DrawMaterialSurface(canvas, popup, 10 * s, Pal.Card);
+        var muteRect = VolumeMuteRect(popup, s);
+        DrawText(canvas, muted ? "🔇" : "🔊",
+            popup.MidX - MeasureText(muted ? "🔇" : "🔊", 12 * s) / 2, muteRect.MidY + 4 * s,
+            12 * s, muted ? Pal.Danger : Pal.Sub);
+
+        var groove = VolumeGroove(popup, s);
         using (var tp = new SKPaint { Color = Pal.Track, IsAntialias = true })
-            canvas.DrawRoundRect(track, 2 * s, 2 * s, tp);
+            canvas.DrawRoundRect(new SKRect(groove.MidX - 3 * s, groove.Top, groove.MidX + 3 * s, groove.Bottom),
+                3 * s, 3 * s, tp);
         float p = muted ? 0f : level.Value;
         if (p > 0.005f)
         {
-            var fill = new SKRect(track.Left, track.Top, track.Left + track.Width * p, track.Bottom);
-            using (var fp = new SKPaint { Color = MediaAccent, IsAntialias = true })
-                canvas.DrawRoundRect(fill, 2 * s, 2 * s, fp);
+            float top = groove.Bottom - groove.Height * p;
+            using var fp = new SKPaint { Color = MediaAccent, IsAntialias = true };
+            canvas.DrawRoundRect(new SKRect(groove.MidX - 3 * s, top, groove.MidX + 3 * s, groove.Bottom),
+                3 * s, 3 * s, fp);
+            using var knob = new SKPaint { Color = Pal.Fg, IsAntialias = true };
+            canvas.DrawCircle(groove.MidX, top, 5 * s, knob);
         }
     }
 

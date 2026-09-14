@@ -974,6 +974,20 @@ internal static class Diag
             ("page-quick", () => { appPages.ForceMode("expanded"); appPages.ForcePage(5); }),
             // 回归现场：正按在「重启」上、进度 66%。用户早先就是被"随手一点就关机"打到的，
             // 现在危险动作只在展开页里、且必须长按才执行。
+            // 音量竖向弹出条（点喇叭展开的样子）
+            ("expanded-media-volume", () =>
+            {
+                mediaStyleB.InjectState(new MediaState
+                {
+                    Active = true, Title = "夜曲", Artist = "周杰伦", AppId = "cloudmusic.exe",
+                    Status = "Playing", PositionMs = 70_000, DurationMs = 210_000, Thumb = SynthCover(280),
+                });
+                mediaStyleB.InjectSessions(Array.Empty<SessionInfo>(), -1);
+                appStyleB.ForceFocus("media");
+                appStyleB.ForceMode("expanded");
+                appStyleB.InjectVolume(0.62f);
+                appStyleB.ForceVolumePopup(true);
+            }),
             ("page-quick-hold-forced", () =>
             {
                 appPages.ForceMode("expanded");
@@ -1057,6 +1071,7 @@ internal static class Diag
             ["compact-composite-big"] = appCompBig,
             ["expanded-media-lyrics-plain"] = appPlain,
             ["expanded-media-style-b"] = appStyleB, ["expanded-media-style-c"] = appStyleC,
+            ["expanded-media-volume"] = appStyleB,
             ["compact-clock-translucent"] = appTrans,
             ["expanded-plan-realcfg"] = appReal,
             ["page-plan"] = appPages, ["page-perf"] = appPages, ["page-weather"] = appPages,
@@ -2074,7 +2089,23 @@ internal static class Diag
                 var app3 = new NativeIslandApp(new AppConfig(), m3);
                 var panel = new SKRect(0, 0, (float)NativeIslandApp.BaseExpandedW, (float)NativeIslandApp.BaseExpandedH);
                 var ch3 = app3.ChromeFor(panel, 1f);
-                Check("媒体页：进度条为两端时间让位（左右各留 ≥52）",
+                {
+                // 音量改成"点图标弹出竖向调节条"：弹出条在图标正上方、槽在条内、换算顶部=1
+                var glyph = new SKRect(300, 280, 324, 304);
+                var popup = NativeIslandApp.VolumePopup(glyph, 1f);
+                var groove = NativeIslandApp.VolumeGroove(popup, 1f);
+                Check("音量：弹出条在图标正上方、槽在条内",
+                    popup.Bottom < glyph.Top && popup.MidX == glyph.MidX
+                    && groove.Top >= popup.Top && groove.Bottom <= popup.Bottom
+                    && NativeIslandApp.VolumeMuteRect(popup, 1f).Bottom <= groove.Top);
+                Check("音量：纵向位置换算（顶部=1、底部=0、越界钳住）",
+                    Math.Abs(NativeIslandApp.VolumeFromY(groove, groove.Top) - 1) < 0.001
+                    && Math.Abs(NativeIslandApp.VolumeFromY(groove, groove.Bottom) - 0) < 0.001
+                    && Math.Abs(NativeIslandApp.VolumeFromY(groove, groove.MidY) - 0.5) < 0.02
+                    && NativeIslandApp.VolumeFromY(groove, groove.Top - 500) == 1
+                    && NativeIslandApp.VolumeFromY(groove, groove.Bottom + 500) == 0);
+            }
+            Check("媒体页：进度条为两端时间让位（左右各留 ≥52）",
                     ch3.Seek.Left - panel.Left >= 52 && panel.Right - ch3.Seek.Right >= 52
                     && ch3.Play.Left < ch3.Play.Right && ch3.Prev.Left < ch3.Play.Left,
                     $"left={ch3.Seek.Left - panel.Left:0} right={panel.Right - ch3.Seek.Right:0}");
