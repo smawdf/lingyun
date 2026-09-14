@@ -1447,6 +1447,21 @@ public sealed class NativeIslandApp : IDisposable
         return Math.Clamp(total, CompositeMinW, CompositeMaxW) * scale;
     }
 
+    /// <summary>
+    /// 把槽位整体平移到容器里居中。CompositeWidth 会把总宽夹到 220–900，
+    /// 内容比下限窄时（例如关掉时间、只留硬件 + 网速）若不补偿，模块会全部贴在左边。
+    /// 内容本来就填满/超出容器时原样返回——那两种情况仍按设计中的左 16 / 右 10 内边距排。
+    /// </summary>
+    internal static (double X, double W)[] CenterSlots((double X, double W)[] slots, double rawTotal, double containerW)
+    {
+        if (slots.Length == 0 || containerW <= rawTotal) return slots;
+        double blockStart = slots[0].X, blockEnd = slots[^1].X + slots[^1].W;
+        double shift = (containerW - (blockEnd - blockStart)) / 2 - blockStart;
+        var moved = new (double X, double W)[slots.Length];
+        for (int i = 0; i < slots.Length; i++) moved[i] = (slots[i].X + shift, slots[i].W);
+        return moved;
+    }
+
     /// <summary>把基准槽位换算成画布坐标的模块矩形。</summary>
     internal static SKRect SlotRect(SKRect r, (double X, double W) slot, float s)
         => new(r.Left + (float)(slot.X * s), r.Top,
@@ -1510,6 +1525,9 @@ public sealed class NativeIslandApp : IDisposable
         => CompMediaArt + 8
            + Math.Min(MeasureText(CompositeMediaText(), 14, SKFontStyleWeight.SemiBold), CompMediaTextMax)
            + 8 + CompSpectrumW;
+
+    /// <summary>组合模式媒体模块的最大槽宽（媒体文本按 CompMediaTextMax 封顶），供自测校验总宽不越上限。</summary>
+    internal static double CompositeMediaWMax => CompMediaArt + 8 + CompMediaTextMax + 8 + CompSpectrumW;
 
     /// <summary>组合模式目标宽度（含 CompactScale 缩放）。</summary>
     private double CompositeTargetW()
@@ -2069,14 +2087,16 @@ public sealed class NativeIslandApp : IDisposable
         // 模块与内容一起随「胶囊大小」缩放：否则 1.4x 时岛变宽、内容还按原尺寸，右侧留一大片空白
         float cs = CompactContentScale(s);
         bool media = _cfg.CompositeMedia && MediaActive;
-        var (total, slots) = CompositeLayout(_cfg.CompositeClock, _cfg.CompositeHardware, _cfg.CompositeNetwork,
+        var (total, rawSlots) = CompositeLayout(_cfg.CompositeClock, _cfg.CompositeHardware, _cfg.CompositeNetwork,
             media, CompactClockSlotW(), CompositeHwW(), CompositeNetW(), CompositeMediaW());
-        if (slots.Length == 0 || total <= 0)
+        if (rawSlots.Length == 0 || total <= 0)
         {
             // 兜底：三个模块全关（Normalize 会拦住，这里防御性退回时钟）
             DrawCompositeClock(canvas, r, cs);
             return;
         }
+        // 胶囊宽度被 220/900 夹住时（关掉时间最容易触发）内容整体居中，不要贴着左边
+        var slots = CenterSlots(rawSlots, total, r.Width / cs);
         int i = 0;
         if (_cfg.CompositeClock) DrawCompositeClock(canvas, SlotRect(r, slots[i++], cs), cs);
         if (_cfg.CompositeHardware) DrawCompositeHardware(canvas, SlotRect(r, slots[i++], cs), cs);
@@ -2138,11 +2158,15 @@ public sealed class NativeIslandApp : IDisposable
     private void DrawNetRow(SKCanvas canvas, SKRect slot, float s, float cy, string tag, double kbps)
     {
         float tagSize = CompHwTagSize * s;
-        DrawText(canvas, tag, slot.Left, cy + 3.5f * s, tagSize, Pal.Sub);
-        float tagW = MeasureText(tag, tagSize);
         string text = FmtRate(kbps);
         float size = CompHwPctSize * s;
-        DrawText(canvas, text, slot.Left + tagW + 5 * s, cy + 3.5f * s, size, Pal.Fg);
+        float tagW = MeasureText(tag, tagSize);
+        float textW = MeasureText(text, size);
+        // 槽位按最长数值 "999.9 MB/s" 预留（数字跳动不抖），实际值短一截：
+        // 「↓ + 数值」整体在槽内居中，别让多余留白全堆在右侧（用户反馈"靠左"）
+        float x = slot.Left + Math.Max(0, (slot.Width - (tagW + 5 * s + textW)) / 2);
+        DrawText(canvas, tag, x, cy + 3.5f * s, tagSize, Pal.Sub);
+        DrawText(canvas, text, x + tagW + 5 * s, cy + 3.5f * s, size, Pal.Fg);
     }
 
     private void DrawHwRow(SKCanvas canvas, SKRect slot, float s, float cy, string tag,

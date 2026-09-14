@@ -584,6 +584,24 @@ internal static class Diag
         var mediaCompStatic = new MediaSessionService();
         var appCompStatic = new NativeIslandApp(compStaticCfg, mediaCompStatic);
         // 组合模式 + 大档缩放：验证模块槽位与文本在 1.4x 下不重叠
+        // 组合模式关掉时间（其余全开）：验证内容居中
+        var compNoClockCfg = new AppConfig
+        {
+            Enabled = true, Hour = 23, Minute = 0, Composite = true,
+            CompositeClock = false, CompositeHardware = true, CompositeNetwork = true,
+        };
+        compNoClockCfg = ConfigStore.Normalize(compNoClockCfg);
+        var mediaCompNoClock = new MediaSessionService();
+        var appCompNoClock = new NativeIslandApp(compNoClockCfg, mediaCompNoClock);
+
+        // 关掉时间只留硬件 + 网速、且没有媒体：内容比 220 下限窄，验证整体居中
+        var compHwNetCfg = ConfigStore.Normalize(new AppConfig
+        {
+            Enabled = true, Hour = 23, Minute = 0, Composite = true,
+            CompositeClock = false, CompositeHardware = true, CompositeNetwork = true, CompositeMedia = false,
+        });
+        var appCompHwNet = new NativeIslandApp(compHwNetCfg, new MediaSessionService());
+
         var compBigCfg = new AppConfig { Enabled = true, Hour = 23, Minute = 0, Composite = true, CompactScale = 1.4 };
         compBigCfg = ConfigStore.Normalize(compBigCfg);
         var mediaCompBig = new MediaSessionService();
@@ -769,6 +787,26 @@ internal static class Diag
                 appComp.InjectSpectrum(new float[] { 0.9f, 0.65f, 0.8f, 0.4f, 0.55f });
                 appComp.ForceFocus("media");
                 appComp.ForceMode("compact");
+            }),
+            // 关掉时间、只留硬件/网速/媒体：验证内容是否居中（用户反馈"不居中、靠左"）
+            ("compact-composite-noclock", () =>
+            {
+                mediaCompNoClock.InjectState(new MediaState
+                {
+                    Active = true, Title = "夜曲", Artist = "周杰伦", AppId = "cloudmusic.exe",
+                    Status = "Playing", PositionMs = 65_000, DurationMs = 210_000,
+                });
+                appCompNoClock.InjectData(new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600));
+                appCompNoClock.InjectSpectrum(new float[] { 0.6f, 0.4f, 0.9f, 0.5f, 0.3f });
+                appCompNoClock.ForceFocus("media");
+                appCompNoClock.ForceMode("compact");
+            }),
+            // 关掉时间、只留硬件 + 网速（无媒体）：内容仍比 220 下限窄，模块应整体居中
+            ("compact-composite-hwnet", () =>
+            {
+                appCompHwNet.InjectData(new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600));
+                appCompHwNet.ForceFocus("timer");
+                appCompHwNet.ForceMode("compact");
             }),
             // 组合模式只有时间 + 硬件（无媒体会话）：宽度应比三模块窄一截
             ("compact-composite-static", () =>
@@ -1070,6 +1108,8 @@ internal static class Diag
             ["compact-clock-big"] = appBig, ["expanded-plan-big"] = appBig, ["page-month-big"] = appBig,
             ["compact-media-nospectrum"] = appOff, ["expanded-media-nolyrics"] = appOff,
             ["compact-composite"] = appComp, ["compact-composite-static"] = appCompStatic,
+            ["compact-composite-noclock"] = appCompNoClock,
+            ["compact-composite-hwnet"] = appCompHwNet,
             ["compact-composite-big"] = appCompBig,
             ["expanded-media-lyrics-plain"] = appPlain,
             ["expanded-media-style-b"] = appStyleB, ["expanded-media-style-c"] = appStyleC,
@@ -1140,6 +1180,8 @@ internal static class Diag
             mediaComp.Dispose();
             appCompStatic.Dispose();
             mediaCompStatic.Dispose();
+            appCompNoClock.Dispose();
+            mediaCompNoClock.Dispose();
             appCompBig.Dispose();
             mediaCompBig.Dispose();
             appPlain.Dispose();
@@ -1265,6 +1307,7 @@ internal static class Diag
         w.WriteLine("观感核对（--dump-frames 出的帧）:");
         w.WriteLine("  frame-page-quick.png            展开「快捷」页，6 个按钮 3 列网格，危险项带红环");
         w.WriteLine("  frame-page-quick-hold-forced.png 正按「重启」，按钮上有红色进度弧、页底有百分比提示");
+        w.WriteLine("  frame-compact-composite-hwnet.png   关掉时间的组合模式（硬件 + 网速，宽度被 220 下限夹住）：模块居中不贴左");
         w.WriteLine();
         w.WriteLine("运行时真机验证（离屏帧证明不了默认行为）:");
         w.WriteLine("  cs/tools/hover_probe.py --label off   # 悬停紧凑态应 0 差异点（无球）");
@@ -2011,7 +2054,21 @@ internal static class Diag
             Check("组合模式：宽度随缩放等比",
                 Math.Abs(NativeIslandApp.CompositeWidth(true, true, false, true, cw, hw, nw, mw, 1.5)
                          - total3 * 1.5) < 0.01);
-            // 槽位在岛体矩形内（媒体模块右缘不越界）
+            // 关掉时间后内容比 220 下限窄：必须整体居中，否则模块全贴在左边（用户实测）
+            var (rawOne, slotOne) = NativeIslandApp.CompositeLayout(false, true, false, false, cw, hw, nw, mw);
+            var centeredOne = NativeIslandApp.CenterSlots(slotOne, rawOne, 220);
+            double leftGap = centeredOne[0].X;
+            double rightGap = 220 - (centeredOne[^1].X + centeredOne[^1].W);
+            Check("组合模式：胶囊被下限夹住时内容居中（左右留白相等）",
+                rawOne < 220 && Math.Abs(leftGap - rightGap) < 0.01 && leftGap > slotOne[0].X,
+                $"左 {leftGap:0.#} 右 {rightGap:0.#} 原始总宽 {rawOne:0.#}");
+            Check("组合模式：内容填满或溢出容器时不平移（保留左 16 / 右 10 内边距）",
+                ReferenceEquals(NativeIslandApp.CenterSlots(slotOne, rawOne, rawOne), slotOne)
+                && ReferenceEquals(NativeIslandApp.CenterSlots(slots3, total3, total3 - 40), slots3));
+            Check("组合模式：四模块全开（含最长媒体文本）也不超过上限 900",
+                NativeIslandApp.CompositeLayout(true, true, true, true, NativeIslandApp.CompactClockSlotW(),
+                    NativeIslandApp.CompositeHwW(), NativeIslandApp.CompositeNetW(),
+                    (float)NativeIslandApp.CompositeMediaWMax).Total <= 900);            // 槽位在岛体矩形内（媒体模块右缘不越界）
             var islandRect = new SKRect(10, 0, (float)(10 + total3 * 1.2), 52);
             var last = NativeIslandApp.SlotRect(islandRect, slots3[2], 1.2f);
             Check("组合模式：最后一个模块右缘不越出岛体",
