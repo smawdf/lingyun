@@ -2128,6 +2128,31 @@ internal static class Diag
                     && ch3.Play.Left < ch3.Play.Right && ch3.Prev.Left < ch3.Play.Left,
                     $"left={ch3.Seek.Left - panel.Left:0} right={panel.Right - ch3.Seek.Right:0}");
             }
+            // 置顶层级（用户要的选项）：always / normal / auto（前台全屏让位）
+            Check("置顶层级：always 恒置顶、normal 不置顶、auto 全屏让位",
+                NativeIslandApp.EffectiveTopmost("always", false, false)
+                && NativeIslandApp.EffectiveTopmost("always", false, true)
+                && !NativeIslandApp.EffectiveTopmost("normal", false, false)
+                && !NativeIslandApp.EffectiveTopmost("auto", false, true)
+                && NativeIslandApp.EffectiveTopmost("auto", false, false)
+                && !NativeIslandApp.EffectiveTopmost("always", true, false));   // 设置窗打开一律让位
+            Check("置顶层级：Normalize 拒绝乱值、保留三档；点空白收起默认开",
+                ConfigStore.Normalize(new AppConfig { TopmostMode = "auto" }).TopmostMode == "auto"
+                && ConfigStore.Normalize(new AppConfig { TopmostMode = "normal" }).TopmostMode == "normal"
+                && ConfigStore.Normalize(new AppConfig { TopmostMode = "zzz" }).TopmostMode == "always"
+                && new AppConfig().CollapseOnBlank
+                && !ConfigStore.Normalize(new AppConfig { CollapseOnBlank = false }).CollapseOnBlank);
+            Check("全屏判定：铺满显示器才算（留 2px 容差）",
+                NativeIslandApp.IsFullscreenRect(
+                    new System.Windows.Rect(0, 0, 2560, 1440), new System.Windows.Rect(0, 0, 2560, 1440))
+                && NativeIslandApp.IsFullscreenRect(
+                    new System.Windows.Rect(0, 0, 2560, 1445), new System.Windows.Rect(0, 0, 2560, 1440))
+                && !NativeIslandApp.IsFullscreenRect(
+                    new System.Windows.Rect(0, 0, 2560, 1400), new System.Windows.Rect(0, 0, 2560, 1440)));
+            Check("组合模式：日期行文案与紧凑胶囊一致",
+                NativeIslandApp.CompositeDateText(new DateTime(2026, 9, 14)) == "9月14日 周一"
+                && NativeIslandApp.CompositeDateText(new DateTime(2026, 9, 20)) == "9月20日 周日");
+
             // 展开面板自动回缩：可配置 + 光标在岛上不收（分层窗 WM_MOUSELEAVE 会偶发）
             var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             Check("自动回缩：配置 0 表示永不自动收起",

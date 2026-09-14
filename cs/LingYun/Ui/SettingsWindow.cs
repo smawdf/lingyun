@@ -58,6 +58,9 @@ public sealed class SettingsWindow : Window
     private readonly RadioButton _matAcrylic = new();
     private readonly RadioButton _matGlass = new();
     private readonly RadioButton _matClassic = new();
+    private readonly RadioButton _topAlways = new();
+    private readonly RadioButton _topNormal = new();
+    private readonly RadioButton _topAuto = new();
     private readonly TextBlock _materialHint = new();
     private readonly Dictionary<string, CheckBox> _checks = new();
     // 需要自定义长相的控件（原型里是圆角药丸 / 开关 / 无边框按钮；经典档交回系统默认模板）
@@ -464,6 +467,17 @@ public sealed class SettingsWindow : Window
         });
         AddHint(root, "展开面板在鼠标离开岛后多久自动收起；调到最左（0）就永不自动收起，点空白处仍然可以手动收起。");
 
+        AddGroupLabel(root, "窗口层级");
+        card = NewCard(root);
+        AddRadioRow(card, "置顶", new[]
+        {
+            ("始终置顶", _topAlways), ("普通层", _topNormal), ("自动（全屏让位）", _topAuto),
+        }, "topmost");
+        _topAlways.Checked += (_, _) => SetTopmostMode("always");
+        _topNormal.Checked += (_, _) => SetTopmostMode("normal");
+        _topAuto.Checked += (_, _) => SetTopmostMode("auto");
+        AddHint(root, "自动：检测到有窗口全屏（游戏/视频）时岛自动退到后面，退出全屏自动恢复置顶。");
+
         AddGroupLabel(root, "显示器");
         card = NewCard(root);
         var row = new Grid { Margin = new Thickness(0, 8, 0, 8) };
@@ -501,6 +515,9 @@ public sealed class SettingsWindow : Window
         AddCheck(card, new CheckBox(), "系统通知弹窗",
             "有通知时接管胶囊约 6 秒，点击唤醒对应应用（需在系统设置里允许通知访问）",
             v => { _cfg.Toast = v; _island.ToastEnabled = v; _save(); });
+        AddCheck(card, new CheckBox(), "点空白处收起面板",
+            "展开后点面板空白处收起（关掉后只有右上角 ✕ 能收起；页签条不算空白）",
+            v => { _cfg.CollapseOnBlank = v; _island.ApplyConfig(); });
         AddCheck(card, new CheckBox(), "闲置自动隐藏",
             "无媒体且鼠标离开 10 秒后收起岛；光标移到屏幕顶部即可恢复",
             v => { _cfg.AutoHide = v; _island.ApplyConfig(); });
@@ -882,6 +899,10 @@ public sealed class SettingsWindow : Window
         Backfill(FindCheck("闲置自动隐藏"), _cfg.AutoHide);
         Backfill(FindCheck("显示歌词"), _cfg.Lyrics);
         Backfill(FindCheck("卡拉OK逐字"), _cfg.LyricsKaraoke);
+        _topAlways.IsChecked = _cfg.TopmostMode == "always";
+        _topNormal.IsChecked = _cfg.TopmostMode == "normal";
+        _topAuto.IsChecked = _cfg.TopmostMode == "auto";
+        Backfill(FindCheck("点空白处收起面板"), _cfg.CollapseOnBlank);
         _autoStart.IsChecked = AutoStart.IsEnabled();
         SyncCompositeEnabled();
         UpdateMonitorLabel();
@@ -902,6 +923,14 @@ public sealed class SettingsWindow : Window
         _cfg.Theme = theme;
         _island.ApplyConfig();
         ApplyMaterial();   // 深/浅变了，设置窗口自己的配色也跟着走
+    }
+
+    /// <summary>置顶层级：改完立刻重算（auto 模式下前台全屏时让位）。</summary>
+    private void SetTopmostMode(string mode)
+    {
+        if (!_ready) return;
+        _cfg.TopmostMode = mode;
+        _island.ApplyConfig();
     }
 
     private void SetMediaStyle(string style)
@@ -939,6 +968,7 @@ public sealed class SettingsWindow : Window
         _compositeHardware.IsChecked = true;
         _compositeMedia.IsChecked = true;
         _perfNetwork.IsChecked = true;
+        _topAlways.IsChecked = true;
         _glassAdaptive.IsChecked = true;
         foreach (var (label, box) in _checks)
             box.IsChecked = label is "系统通知弹窗" or "显示歌词" or "卡拉OK逐字" or "性能页网速";

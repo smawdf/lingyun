@@ -412,7 +412,23 @@ public sealed class NativeIslandApp : IDisposable
     /// 编辑窗打开期间让岛退出置顶（关闭时传 false 恢复）。
     /// 岛每次 Move 都会重申 TOPMOST，不退出就会压住同样置顶的编辑窗（黑底对黑底，关闭按钮被盖住）。
     /// </summary>
-    public void SetTopmostYield(bool yield) => Post(() => _host.SetTopmost(!yield));
+    public void SetTopmostYield(bool yield) => Post(() =>
+    {
+        _topmostYield = yield;
+        ApplyTopmost();
+    });
+
+    /// <summary>按「置顶层级」设置决定要不要置顶（auto 模式下前台全屏时让位）。</summary>
+    private void ApplyTopmost()
+    {
+        bool top = EffectiveTopmost(_cfg.TopmostMode, _topmostYield,
+            _cfg.TopmostMode == "auto" && ForegroundIsFullscreen());
+        if (top != _topmostNow)
+        {
+            _topmostNow = top;
+            _host.SetTopmost(top);
+        }
+    }
 
     /// <summary>
     /// 设置窗口改了配置后调用：重解析尺寸并立即重绘（岛线程执行）。
@@ -585,6 +601,7 @@ public sealed class NativeIslandApp : IDisposable
             {
                 _nextAutoHideAt = now.AddMilliseconds(500);
                 UpdateAutoHide(now);
+                ApplyTopmost();
             }
 
             if (now >= _nextTick)
@@ -608,6 +625,54 @@ public sealed class NativeIslandApp : IDisposable
     }
 
     private static double OutExpo(double t) => t >= 1 ? 1 : 1 - Math.Pow(2, -10 * t);
+
+    /// <summary>点空白处收起面板（受「点空白处收起」开关控制；关掉后只有 ✕ 能收）。</summary>
+    private void CollapseOnBlank()
+    {
+        if (_cfg.CollapseOnBlank) SetMode("compact");
+    }
+
+    /// <summary>
+    /// 置顶层级（纯函数，自测用）：always 恒置顶；normal 不置顶；auto 在前台全屏时让位。
+    /// 设置窗口打开期间（uiYield）任何模式都不置顶。
+    /// </summary>
+    internal static bool EffectiveTopmost(string mode, bool uiYield, bool foregroundFullscreen)
+        => !uiYield && mode switch
+        {
+            "normal" => false,
+            "auto" => !foregroundFullscreen,
+            _ => true,
+        };
+
+    /// <summary>窗口矩形是否铺满显示器（留 2px 容差）。纯函数，自测钉住。</summary>
+    internal static bool IsFullscreenRect(System.Windows.Rect win, System.Windows.Rect monitor)
+        => win.Left <= monitor.Left + 2 && win.Top <= monitor.Top + 2
+           && win.Right >= monitor.Right - 2 && win.Bottom >= monitor.Bottom - 2;
+
+    /// <summary>前台窗口是否全屏铺满它所在显示器（auto 模式据此让位）。</summary>
+    private bool ForegroundIsFullscreen()
+    {
+        try
+        {
+            IntPtr fg = Native.GetForegroundWindow();
+            if (fg == IntPtr.Zero || fg == _host.Hwnd) return false;
+            Native.GetWindowThreadProcessId(fg, out uint pid);
+            if (pid == Environment.ProcessId) return false;      // 自己的窗口不算
+            if (!Native.GetWindowRect(fg, out var wr)) return false;
+            IntPtr mon = Native.MonitorFromWindow(fg, 2);        // MONITOR_DEFAULTTONEAREST
+            if (mon == IntPtr.Zero) return false;
+            var mi = new Native.MONITORINFO
+            {
+                cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>(),
+            };
+            if (!Native.GetMonitorInfo(mon, ref mi)) return false;
+            return IsFullscreenRect(
+                new System.Windows.Rect(wr.Left, wr.Top, wr.Right - wr.Left, wr.Bottom - wr.Top),
+                new System.Windows.Rect(mi.rcMonitor.Left, mi.rcMonitor.Top,
+                    mi.rcMonitor.Right - mi.rcMonitor.Left, mi.rcMonitor.Bottom - mi.rcMonitor.Top));
+        }
+        catch { return false; }
+    }
 
     /// <summary>
     /// 拖动进度条：更新本地预览位置（不立刻 seek，松手才提交）。
@@ -636,6 +701,8 @@ public sealed class NativeIslandApp : IDisposable
         }
     }
 
+    private bool _topmostYield;        // 设置窗打开期间让位
+    private bool _topmostNow = true;   // 当前实际置顶状态
     private bool _volPopup;      // 音量竖向弹出条是否展开
     private bool _volDrag;       // 正在拖动音量
     private bool _seekDrag;
@@ -889,7 +956,9 @@ public sealed class NativeIslandApp : IDisposable
                             return;
                         }
                     }
-                    TraceClick("tab band but no tab hit");
+                    // 页签条上的空白也算导航区：吃掉落点，别穿透到"点空白收起"
+                    TraceClick("tab band but no tab hit (swallowed)");
+                    return;
                 }
             }
             // ✕
@@ -1116,8 +1185,8 @@ public sealed class NativeIslandApp : IDisposable
                 else if (ch.Next.Contains((float)x, (float)y)) _ = _media.NextAsync();
                 return;
             }
-            // 性能/天气等展示页没有可操作控件：点击空白同样收起展开面板。
-            SetMode("compact");
+            // 展示页（性能/天气…）没有可操作控件：点空白处按设置决定收不收
+            CollapseOnBlank();
             return;
         }
         else if (_mode == "confirm")
@@ -1386,7 +1455,8 @@ public sealed class NativeIslandApp : IDisposable
     internal static float CompactClockSlotW()
         => Math.Max(MeasureText("88:88", CompClockSize, SKFontStyleWeight.SemiBold),
             Math.Max(MeasureText("已暂停", CompClockSize, SKFontStyleWeight.SemiBold),
-                MeasureText("8时88分", CompClockSize, SKFontStyleWeight.SemiBold)));
+                Math.Max(MeasureText("8时88分", CompClockSize, SKFontStyleWeight.SemiBold),
+                    MeasureText("99月99日 周九", 10, SKFontStyleWeight.Medium))));
 
     /// <summary>组合模式硬件槽宽（基准像素）：标签 + 进度条 + 按「100%」定宽的百分比槽。</summary>
     internal static float CompositeHwW()
@@ -1981,9 +2051,22 @@ public sealed class NativeIslandApp : IDisposable
         string label = ClockLabel();
         float size = CompClockSize * s;
         float w = MeasureText(label, size, SKFontStyleWeight.SemiBold);
-        DrawText(canvas, label, slot.MidX - w / 2, slot.MidY + 7 * s, size,
-            Pal.Fg, SKFontStyleWeight.SemiBold);
+        // 时间 + 日期两行（用户反馈组合模式下日期丢了）；槽太矮时退回只画时间
+        float dateSize = 10 * s;
+        string date = CompositeDateText();
+        float dw = MeasureText(date, dateSize);
+        bool twoLine = slot.Height >= 46 * s;
+        DrawText(canvas, label, slot.MidX - w / 2, twoLine ? slot.MidY - 1 * s : slot.MidY + 7 * s,
+            size, Pal.Fg, SKFontStyleWeight.SemiBold);
+        if (twoLine)
+            DrawText(canvas, date, slot.MidX - dw / 2, slot.MidY + 15 * s, dateSize, Pal.Dim);
     }
+
+    /// <summary>组合模式里的日期行（与紧凑时钟胶囊同一套文案）。纯函数便于自测。</summary>
+    internal static string CompositeDateText(DateTime now)
+        => $"{now.Month}月{now.Day}日 周{WdNames[((int)now.DayOfWeek + 6) % 7]}";
+
+    private string CompositeDateText() => CompositeDateText(DateTime.Now);
 
     /// <summary>组合模式·硬件模块：CPU / 内存两行（标签 + 迷你条 + 定宽百分比）。</summary>
     private void DrawCompositeHardware(SKCanvas canvas, SKRect slot, float s)

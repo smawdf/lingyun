@@ -88,6 +88,13 @@ public sealed class AppConfig
     /// 展开面板自动回缩：鼠标离开岛多久后收起（毫秒，0 = 不自动回缩，默认 900）。
     /// </summary>
     public int AutoCollapseMs { get; set; } = 900;
+    /// <summary>点展开面板的空白处是否收起面板（默认 true；关掉后只有 ✕ 能收）。</summary>
+    public bool CollapseOnBlank { get; set; } = true;
+    /// <summary>
+    /// 置顶层级：always 始终置顶（默认）/ normal 普通层（会被别的窗口盖住）/
+    /// auto 自动（检测到全屏窗口在前台时让位，退出全屏自动恢复）。
+    /// </summary>
+    public string TopmostMode { get; set; } = "always";
     /// <summary>
     /// 展开媒体页样式：a=精修（默认，结构同旧版、质感重做）/ b=沉浸（封面模糊铺满 + 玻璃控制条）/
     /// c=氛围海报（封面取色双光斑 + 大标题）。设置窗口「媒体页」可实时切换。
@@ -178,6 +185,7 @@ public static class ConfigStore
         if (cfg.Opacity is < 40 or > 100) cfg.Opacity = 100;
         if (cfg.MediaStyle is not ("a" or "b" or "c")) cfg.MediaStyle = "a";
         if (cfg.AutoCollapseMs is < 0 or > 10000) cfg.AutoCollapseMs = 900;
+        if (cfg.TopmostMode is not ("always" or "normal" or "auto")) cfg.TopmostMode = "always";
         if (cfg.UiMaterial is not ("acrylic" or "glass" or "classic")) cfg.UiMaterial = "acrylic";
         cfg.Weekdays = cfg.Weekdays.Where(d => d is >= 1 and <= 7).Distinct().OrderBy(x => x).ToList();
         cfg.Dates = cfg.Dates
