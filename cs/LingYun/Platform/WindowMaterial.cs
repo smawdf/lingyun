@@ -94,6 +94,45 @@ internal static class WindowMaterial
     /// <summary>是否画落影（经典档不要）。</summary>
     internal static bool HasShadow(string material) => material != Classic;
 
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int w, int h);
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowRgn(IntPtr hwnd, IntPtr hRgn, bool redraw);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    /// <summary>
+    /// 把窗口裁成圆角矩形。
+    /// 为什么必须裁窗口而不是只圆面板：accent 模糊是**窗口级**的，会铺满整个窗口矩形。
+    /// 面板若比窗口小（留边距画落影），边距那一圈就会露出模糊层——看起来就是"两层"。
+    /// 所以现在的做法是：窗口 = 面板（不留边距），圆角由窗口区域裁出来。
+    /// </summary>
+    public static void ApplyRoundedRegion(Window window, double radiusDip)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        try
+        {
+            double scale = 1.0;
+            uint dpi = GetDpiForWindow(hwnd);
+            if (dpi > 0) scale = dpi / 96.0;
+            int w = (int)Math.Round(window.ActualWidth * scale);
+            int h = (int)Math.Round(window.ActualHeight * scale);
+            if (w <= 0 || h <= 0) return;
+            if (radiusDip < 1)
+            {
+                SetWindowRgn(hwnd, IntPtr.Zero, true);
+                return;
+            }
+            int d = (int)Math.Round(radiusDip * 2 * scale);
+            IntPtr rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, d, d);
+            if (rgn != IntPtr.Zero) SetWindowRgn(hwnd, rgn, true);
+        }
+        catch { /* 裁剪失败只是方角，不影响使用 */ }
+    }
+
     /// <summary>
     /// 窗口级设置：深色标题栏属性 + 关掉 DWM 自带圆角（圆角由我们自己的 Border + Clip 画，
     /// DWM 那 ~8px 的圆角会和我们对不齐，四角露馅）+ **让 DWM 去做背景模糊**。

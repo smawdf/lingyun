@@ -97,8 +97,8 @@ public sealed class SettingsWindow : Window
         _save = save;
 
         Title = "灵云设置";
-        Width = WinW + ShadowMargin * 2;
-        Height = WinH + ShadowMargin * 2;
+        Width = WinW;
+        Height = WinH;
         SizeToContent = SizeToContent.Manual;
         WindowStartupLocation = WindowStartupLocation.Manual;
         WindowStyle = WindowStyle.None;
@@ -116,8 +116,9 @@ public sealed class SettingsWindow : Window
         Left = SystemParameters.WorkArea.Left + (SystemParameters.WorkArea.Width - Width) / 2;
         Top = SystemParameters.WorkArea.Top + 40;
 
-        // 面板外面留一圈给落影（分层窗没有系统阴影，自己在 WPF 里画）
-        _shell.Margin = new Thickness(ShadowMargin);
+        // 面板 == 窗口：accent 模糊是窗口级的，面板若留边距画落影，
+        // 边距那一圈会露出模糊层（用户看到的"两层"）。圆角改由窗口区域裁。
+        _shell.Margin = new Thickness(0);
         _shell.BorderThickness = new Thickness(1);
         _shadowHost.Child = _shell;
         _shadowHost.Background = Brushes.Transparent;
@@ -152,6 +153,7 @@ public sealed class SettingsWindow : Window
         {
             PlaceBelowIsland();
             UpdatePanelClip();
+            WindowMaterial.ApplyRoundedRegion(this, WindowMaterial.Radius(_cfg.UiMaterial));
         };
         Loaded += (_, _) =>
         {
@@ -610,17 +612,14 @@ public sealed class SettingsWindow : Window
         _shell.Background = null;                    // 色调交给 overlay（它在背景图之上）
         UpdatePanelClip();
 
-        _shadowHost.Effect = WindowMaterial.HasShadow(material)
-            ? new System.Windows.Media.Effects.DropShadowEffect
-            {
-                BlurRadius = 40, ShadowDepth = 8, Direction = 270, Opacity = 0.45,
-                Color = Colors.Black,
-            }
-            : null;
+        // 落影去掉：窗口区域已经裁成圆角，画不出窗口外的阴影。
+        // Windows 自带的亚克力窗口同样没有外阴影，属于这套材质的固有取舍。
+        _shadowHost.Effect = null;
 
         if (_ready || IsInitialized)
         {
             WindowMaterial.ApplyWindowChrome(this, _dark, material);
+            WindowMaterial.ApplyRoundedRegion(this, radius);
             string effective = WindowMaterial.ResolveBackdrop(Environment.OSVersion.Version.Build, material);
             _materialHint.Text = material switch
             {
@@ -648,6 +647,7 @@ public sealed class SettingsWindow : Window
         if (w <= 0 || h <= 0) { w = WinW; h = WinH; }
         _shell.Clip = new System.Windows.Media.RectangleGeometry(
             new Rect(0, 0, w, h), _shell.CornerRadius.TopLeft, _shell.CornerRadius.TopLeft);
+        // 面板贴满窗口后，圆角靠窗口区域保证（模糊层也一起被裁掉）
     }
 
     /// <summary>点在控件上就别拖窗（按钮/开关/滑杆/滚动条要自己收事件）。</summary>
