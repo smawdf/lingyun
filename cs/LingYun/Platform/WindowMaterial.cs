@@ -14,9 +14,12 @@ namespace LingYun.Platform;
 ///   （SetWindowCompositionAttribute / DWMWA_SYSTEMBACKDROP_TYPE）在无边框窗口上本来就
 ///   边缘 artifact 多，还和分层窗互斥。
 ///
-///   所以背景模糊不求系统，自己抓、自己糊：抓窗口背后那块屏幕（BackdropSampler），
-///   在 WPF 里用它当面板背景并加 BlurEffect——和岛的做法同源。
-///   抓屏前提是**把自己从捕获里排除**（WDA_EXCLUDEFROMCAPTURE），否则抓到的就是自己。
+///   背景模糊则**交给 DWM 合成器**（SetWindowCompositionAttribute 的亚克力）：
+///   它是合成器的一部分，窗口移动时模糊跟手、零延迟。
+///   曾经试过"自己抓屏 + WPF BlurEffect"，观感能对，但拖动时是卡顿式的——
+///   抓屏只有 1Hz、还要 CPU 模糊，这条路对"会移动的窗口"是死路。
+///   参考实现：riverar/sample-win32-acrylicblur（WPF 亚克力事实标准样例，微软 Rafael Rivera），
+///   它用的就是 AllowsTransparency=True + WindowStyle=None + alpha=1 近透明背景 + accent 模糊。
 ///
 /// 三档材质只是参数不同（模糊半径 + 色调 alpha + 圆角 + 阴影），都由我们自己画：
 ///   acrylic 亚克力：模糊 34px，色调 ~65%，圆角 10，带落影
@@ -30,20 +33,38 @@ internal static class WindowMaterial
     public const string Glass = "glass";
     public const string Classic = "classic";
 
-    /// <summary>Win10 2004（19041）起支持 WDA_EXCLUDEFROMCAPTURE，能把窗口从抓屏里排除。</summary>
-    private const int BuildExcludeFromCapture = 19041;
+    /// <summary>Win10 1803（17134）起支持 SetWindowCompositionAttribute 的亚克力模糊。</summary>
+    private const int BuildAcrylicBlur = 17134;
+
+    private const int WCA_ACCENT_POLICY = 19;
+    private const int ACCENT_DISABLED = 0;
+    private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ACCENTPOLICY
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public int GradientColor;   // ABGR，alpha 就是色调浓度
+        public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINCOMPATTRDATA
+    {
+        public int Attribute;
+        public IntPtr Data;
+        public int SizeOfData;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINCOMPATTRDATA data);
 
     private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     private const int DWMWCP_DONOTROUND = 1;
-    private const uint WDA_NONE = 0x0;
-    private const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
-
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
-
-    [DllImport("user32.dll")]
-    private static extern int SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
 
     /// <summary>
     /// 纯函数（自测用）：这一档材质实际怎么实现。
@@ -53,7 +74,7 @@ internal static class WindowMaterial
     internal static string ResolveBackdrop(int osBuild, string material)
     {
         if (material == Classic) return "solid";
-        return osBuild >= BuildExcludeFromCapture ? "capture-blur" : "tint";
+        return osBuild >= BuildAcrylicBlur ? "dwm-acrylic" : "solid";
     }
 
     /// <summary>面板基准色调（带 alpha 才叫材质）：抓屏模糊由 WPF 画，这里只给色调。</summary>
@@ -66,10 +87,6 @@ internal static class WindowMaterial
             _ => dark ? unchecked((int)0x861A1B20) : unchecked((int)0x7AF2F4F8),   // acrylic
         };
 
-    /// <summary>背景模糊半径（DIP）：亚克力比玻璃糊得更重一点，和原型的手感对齐。</summary>
-    internal static double BlurRadius(string material)
-        => material == Glass ? 30 : 36;
-
     /// <summary>面板圆角（DIP）。</summary>
     internal static double Radius(string material)
         => material switch { Classic => 0, Glass => 20, _ => 10 };
@@ -78,38 +95,16 @@ internal static class WindowMaterial
     internal static bool HasShadow(string material) => material != Classic;
 
     /// <summary>
-    /// 抓"窗口背后那块屏幕"，抓之前临时把自己从捕获里排除、抓完立刻恢复。
-    ///
-    /// 为什么是临时：`WDA_EXCLUDEFROMCAPTURE` 会让这个窗口在**任何**截屏/录屏工具里消失
-    /// （实测连开发者自己的 CopyFromScreen 都拍不到它），长期开着不可接受。
-    /// 只在 BitBlt 那一瞬间排除，用户的截图/录屏不受影响。
-    /// </summary>
-    public static byte[]? CaptureBehind(Window window, Services.BackdropSampler sampler,
-        int x, int y, int w, int h)
-    {
-        var hwnd = new WindowInteropHelper(window).Handle;
-        if (hwnd == IntPtr.Zero) return null;
-        bool excluded = false;
-        try { excluded = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) != 0; }
-        catch { /* 老系统不支持：那就带着自己一起抓，至少不崩 */ }
-        try
-        {
-            return sampler.CaptureBgra(x, y, w, h);
-        }
-        finally
-        {
-            if (excluded)
-            {
-                try { SetWindowDisplayAffinity(hwnd, WDA_NONE); } catch { /* ignore */ }
-            }
-        }
-    }
-
-    /// <summary>
     /// 窗口级设置：深色标题栏属性 + 关掉 DWM 自带圆角（圆角由我们自己的 Border + Clip 画，
-    /// DWM 那 ~8px 的圆角会和我们对不齐，四角露馅）。
+    /// DWM 那 ~8px 的圆角会和我们对不齐，四角露馅）+ **让 DWM 去做背景模糊**。
+    ///
+    /// 模糊为什么交给 DWM：它是合成器的一部分，窗口移动时模糊跟着走、零延迟。
+    /// 自己抓屏再糊（曾经的做法）在拖动时必然滞后——抓屏只有 1Hz、还要 CPU 模糊，
+    /// 表现就是"模糊背景卡顿式移动"。
+    /// 参考实现：riverar/sample-win32-acrylicblur（WPF 亚克力事实标准样例），
+    /// 它用的就是 AllowsTransparency=True + WindowStyle=None + 近透明背景 + accent 模糊。
     /// </summary>
-    public static void ApplyWindowChrome(Window window, bool dark)
+    public static void ApplyWindowChrome(Window window, bool dark, string material)
     {
         var hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == IntPtr.Zero) return;
@@ -119,6 +114,28 @@ internal static class WindowMaterial
             DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
             int darkFlag = dark ? 1 : 0;
             DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkFlag, sizeof(int));
+
+            int tint = TintArgb(material, dark);
+            int abgr = unchecked((int)((uint)tint & 0xFF000000
+                | (uint)((tint >> 16) & 0xFF)          // R → B
+                | (uint)(tint & 0x0000FF00)             // G
+                | (uint)((tint & 0xFF) << 16)));        // B → R
+            var accent = new ACCENTPOLICY
+            {
+                AccentState = material == Classic ? ACCENT_DISABLED : ACCENT_ENABLE_ACRYLICBLURBEHIND,
+                AccentFlags = 2,
+                GradientColor = material == Classic ? 0 : abgr,
+                AnimationId = 0,
+            };
+            int size = Marshal.SizeOf<ACCENTPOLICY>();
+            IntPtr ptr = Marshal.AllocHGlobal(size);
+            try
+            {
+                Marshal.StructureToPtr(accent, ptr, false);
+                var data = new WINCOMPATTRDATA { Attribute = WCA_ACCENT_POLICY, Data = ptr, SizeOfData = size };
+                SetWindowCompositionAttribute(hwnd, ref data);
+            }
+            finally { Marshal.FreeHGlobal(ptr); }
         }
         catch { /* 设置失败不影响使用 */ }
     }

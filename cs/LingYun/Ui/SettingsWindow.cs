@@ -87,11 +87,7 @@ public sealed class SettingsWindow : Window
     private const double WinW = 820, WinH = 580;
     private const double ShadowMargin = 16;      // 面板外留给落影的一圈
     private readonly Border _shadowHost = new();
-    private readonly Image _backdropImage = new();
     private readonly Border _tintOverlay = new();
-    private readonly System.Windows.Threading.DispatcherTimer _backdropTimer = new();
-    private readonly Services.BackdropSampler _sampler = new();
-    private DateTime _nextBackdropAt = DateTime.MinValue;
     private const double NavW = 196;
 
     public SettingsWindow(AppConfig cfg, NativeIslandApp island, Action save)
@@ -113,7 +109,9 @@ public sealed class SettingsWindow : Window
         // 和岛同一套机制。普通窗口里 Transparent 像素对 DWM 就是不透明黑，
         // 圆角外和边缘会直接变黑（用户看到的"黑框"就是这么来的）。
         AllowsTransparency = true;
-        Background = Brushes.Transparent;
+        // 参考实现（riverar/sample-win32-acrylicblur）用 alpha=1 的近透明黑而不是全透明：
+        // 全 0 时部分系统上不再合成，系统模糊看不见
+        Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));
         FontFamily = new FontFamily("Microsoft YaHei UI");
         Left = SystemParameters.WorkArea.Left + (SystemParameters.WorkArea.Width - Width) / 2;
         Top = SystemParameters.WorkArea.Top + 40;
@@ -126,14 +124,9 @@ public sealed class SettingsWindow : Window
         Content = _shadowHost;
 
         // 面板内容：背景模糊图 → 色调 → 真正的控件
+        // 面板内容：色调层 → 真正的控件。背景模糊交给 DWM 合成（accent 模糊）：
+        // 它是合成器的一部分，窗口移动时模糊跟手；"抓屏 + 自己糊"在拖动时必然滞后。
         var panel = new Grid();
-        _backdropImage.Stretch = Stretch.Fill;
-        _backdropImage.Effect = new System.Windows.Media.Effects.BlurEffect
-        {
-            Radius = 34, KernelType = System.Windows.Media.Effects.KernelType.Gaussian,
-        };
-        _backdropImage.Visibility = Visibility.Collapsed;
-        panel.Children.Add(_backdropImage);
         panel.Children.Add(_tintOverlay);
         panel.Children.Add(BuildLayout());
         _shell.Child = panel;
@@ -152,8 +145,6 @@ public sealed class SettingsWindow : Window
         Closed += (_, _) =>
         {
             try { _save(); } catch { /* 写盘失败不致命 */ }
-            _backdropTimer.Stop();
-            _sampler.Dispose();
         };
         // 有 HWND 之后：把自己从抓屏里排除（否则抓"背后的屏幕"抓到的是自己），并关掉 DWM 圆角
         SourceInitialized += (_, _) => ApplyMaterial();
@@ -161,18 +152,12 @@ public sealed class SettingsWindow : Window
         {
             PlaceBelowIsland();
             UpdatePanelClip();
-            RefreshBackdrop(force: true);
         };
-        LocationChanged += (_, _) => RefreshBackdrop(force: false);
         Loaded += (_, _) =>
         {
             PlaceBelowIsland();
             UpdatePanelClip();
-            RefreshBackdrop(force: true);
-            _backdropTimer.Start();          // 桌面内容会变（换窗口/播放），低频兜底重抓
         };
-        _backdropTimer.Interval = TimeSpan.FromMilliseconds(900);
-        _backdropTimer.Tick += (_, _) => RefreshBackdrop(force: false);
     }
 
     /// <summary>落到岛体下方（放不下由 placer 自己回退）。</summary>
@@ -625,44 +610,27 @@ public sealed class SettingsWindow : Window
         _shell.Background = null;                    // 色调交给 overlay（它在背景图之上）
         UpdatePanelClip();
 
-        if (material == "classic")
-        {
-            _backdropImage.Visibility = Visibility.Collapsed;
-            _backdropImage.Source = null;
-            _shadowHost.Effect = null;
-        }
-        else
-        {
-            _backdropImage.Visibility = Visibility.Visible;
-            _backdropImage.Effect = new System.Windows.Media.Effects.BlurEffect
+        _shadowHost.Effect = WindowMaterial.HasShadow(material)
+            ? new System.Windows.Media.Effects.DropShadowEffect
             {
-                Radius = WindowMaterial.BlurRadius(material),
-                KernelType = System.Windows.Media.Effects.KernelType.Gaussian,
-            };
-            if (WindowMaterial.HasShadow(material))
-            {
-                _shadowHost.Effect = new System.Windows.Media.Effects.DropShadowEffect
-                {
-                    BlurRadius = 40, ShadowDepth = 8, Direction = 270, Opacity = 0.45,
-                    Color = Colors.Black,
-                };
+                BlurRadius = 40, ShadowDepth = 8, Direction = 270, Opacity = 0.45,
+                Color = Colors.Black,
             }
-        }
+            : null;
 
         if (_ready || IsInitialized)
         {
-            WindowMaterial.ApplyWindowChrome(this, _dark);
+            WindowMaterial.ApplyWindowChrome(this, _dark, material);
             string effective = WindowMaterial.ResolveBackdrop(Environment.OSVersion.Version.Build, material);
             _materialHint.Text = material switch
             {
                 "classic" => "纯色面板 + 方角 + 系统控件长相；最清晰、最省资源。",
-                "glass" => "抓屏做背景模糊（我们自己糊）+ 更薄色调 + 大圆角 + 落影。"
-                           + (effective == "capture-blur" ? "" : "（当前系统抓不了屏，退化为纯色调）")
+                "glass" => "系统合成器模糊 + 更薄色调 + 大圆角 + 落影（移动零延迟）。"
+                           + (effective == "solid" ? "（当前系统不支持系统模糊，退化为纯色）" : "")
                            + "WPF 做不了边缘折射，这一档是近似；真折射只在岛那边。",
-                _ => "抓屏做背景模糊（我们自己糊）+ 半透明面板 + 落影。"
-                     + (effective == "capture-blur" ? "" : "（当前系统抓不了屏，退化为纯色调）"),
+                _ => "系统合成器模糊（DWM）+ 半透明面板 + 落影，窗口移动时模糊同步跟手。"
+                     + (effective == "solid" ? "（当前系统不支持系统模糊，退化为纯色）" : ""),
             };
-            RefreshBackdrop(force: true);
         }
         ApplyControlStyles();
         RefreshStates();
@@ -674,73 +642,12 @@ public sealed class SettingsWindow : Window
         (byte)(argb >> 8 & 0xFF), (byte)(argb & 0xFF));
 
     /// <summary>面板按圆角裁切：分层窗里这样才能保证四角之外是真透明（而不是黑框）。</summary>
-    /// <summary>抓到的背景像素平均亮度（BGRX，取 8 像素步长足够）。</summary>
-    private static double MeanLuma(byte[] bgra)
-    {
-        double sum = 0;
-        long n = 0;
-        for (int i = 0; i + 3 < bgra.Length; i += 32)   // 每 8 个像素取一个
-        {
-            sum += 0.114 * bgra[i] + 0.587 * bgra[i + 1] + 0.299 * bgra[i + 2];
-            n++;
-        }
-        return n == 0 ? 0.5 : sum / n / 255.0;
-    }
-
     private void UpdatePanelClip()
     {
         double w = _shell.ActualWidth, h = _shell.ActualHeight;
         if (w <= 0 || h <= 0) { w = WinW; h = WinH; }
         _shell.Clip = new System.Windows.Media.RectangleGeometry(
             new Rect(0, 0, w, h), _shell.CornerRadius.TopLeft, _shell.CornerRadius.TopLeft);
-    }
-
-    /// <summary>
-    /// 抓"面板背后那块屏幕"当背景模糊素材。
-    /// 前提是窗口自己已经从捕获里排除（WDA_EXCLUDEFROMCAPTURE），否则抓到的是自己。
-    /// 低频（≤1Hz）+ 移动时刷新；抓不到就不显示背景图，退化为纯色调。
-    /// </summary>
-    private void RefreshBackdrop(bool force)
-    {
-        if (_cfg.UiMaterial == "classic")
-        {
-            _backdropImage.Source = null;
-            return;
-        }
-        if (!force && DateTime.UtcNow < _nextBackdropAt) return;
-        _nextBackdropAt = DateTime.UtcNow.AddMilliseconds(600);
-        try
-        {
-            var src = PresentationSource.FromVisual(this) as System.Windows.Interop.HwndSource;
-            double scale = src?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
-            int x = (int)Math.Round((Left + ShadowMargin) * scale);
-            int y = (int)Math.Round((Top + ShadowMargin) * scale);
-            int w = (int)Math.Round(WinW * scale);
-            int h = (int)Math.Round(WinH * scale);
-            if (w <= 0 || h <= 0) return;
-            // 临时把自己排除出捕获 → 抓到的才是"背后的桌面"而不是自己
-            var bytes = WindowMaterial.CaptureBehind(this, _sampler, x, y, w, h);
-            if (bytes is null) { _backdropImage.Source = null; return; }
-            var bmp = System.Windows.Media.Imaging.BitmapSource.Create(
-                w, h, 96 * scale, 96 * scale,
-                System.Windows.Media.PixelFormats.Bgra32, null, bytes, w * 4);
-            bmp.Freeze();
-            _backdropImage.Source = bmp;
-
-            // 材质明暗跟着实测背景走：薄材质压在深色桌面上会变成"深底深字"看不清，
-            // 这和岛上那套自适应是同一条结论（那边用 BackdropSampler 的统计，这里直接用抓到的像素）
-            double luma = MeanLuma(bytes);
-            bool wantDark = luma < 0.45;
-            if (wantDark != _dark)
-            {
-                _dark = wantDark;
-                ApplyMaterial();      // 会再抓一次，结论一致即收敛（不会来回翻）
-            }
-        }
-        catch
-        {
-            _backdropImage.Source = null;   // 抓屏失败就退化为纯色调，不影响使用
-        }
     }
 
     /// <summary>点在控件上就别拖窗（按钮/开关/滑杆/滚动条要自己收事件）。</summary>

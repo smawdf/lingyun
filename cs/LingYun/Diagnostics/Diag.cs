@@ -2050,15 +2050,15 @@ internal static class Diag
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "glass" }).UiMaterial == "glass"
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "classic" }).UiMaterial == "classic"
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "neon" }).UiMaterial == "acrylic");
-            Check("界面材质：Win10 2004+ 自己抓屏做背景模糊（不再依赖系统亚克力）",
-                Platform.WindowMaterial.ResolveBackdrop(19041, "acrylic") == "capture-blur"
-                && Platform.WindowMaterial.ResolveBackdrop(26100, "glass") == "capture-blur"
-                    // 不再走 SetWindowCompositionAttribute / DWMWA_SYSTEMBACKDROP_TYPE：
-                    // 普通窗口里 Transparent 像素对 DWM 是不透明黑（黑框来源），
-                    // 现在窗口是分层窗（AllowsTransparency），背景模糊自己抓自己糊
+            Check("界面材质：Win10 1803+ 用系统合成器模糊（DWM，移动零延迟）",
+                Platform.WindowMaterial.ResolveBackdrop(17134, "acrylic") == "dwm-acrylic"
+                && Platform.WindowMaterial.ResolveBackdrop(19045, "glass") == "dwm-acrylic"
+                && Platform.WindowMaterial.ResolveBackdrop(26100, "acrylic") == "dwm-acrylic"
+                    // 模糊必须交给 DWM：自己抓屏 + WPF BlurEffect 观感能对，
+                    // 但窗口一移动就是"卡顿式"的（抓屏 1Hz + CPU 模糊），这条路已废弃
                 );
-            Check("界面材质：老系统退化为纯色调、经典档纯色",
-                Platform.WindowMaterial.ResolveBackdrop(17763, "acrylic") == "tint"
+            Check("界面材质：老系统与经典档退回纯色（不假装有模糊）",
+                Platform.WindowMaterial.ResolveBackdrop(10240, "acrylic") == "solid"
                 && Platform.WindowMaterial.ResolveBackdrop(26100, "classic") == "solid");
             Check("界面材质：玻璃比亚克力更透，经典档不透明",
                 (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF)
