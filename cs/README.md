@@ -19,7 +19,7 @@
 | 开机自启 | `Platform/AutoStart.cs` | HKCU Run |
 | 托盘 | `Platform/TrayService.cs` | 显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 显示歌词 / 浅色主题 / 开机自启 / 退出 |
 | 设置窗口控件长相 | `Ui/SettingsWindow.cs`（模板部分） | 药丸单选 / 开关 / 扁平按钮都用自定义 ControlTemplate，**去掉 WPF 默认模板的 Aero 悬停蓝**；经典档显式交回系统默认模板；标题栏必须有 `Transparent` 背景（`null` 不参与命中测试 → 拖不动，自测用 `InputHitTest` 钉住） |
-| 设置窗口材质 | `Platform/WindowMaterial.cs` | 分层窗（`AllowsTransparency`，四角真透明无黑框）；**亚克力**走 accent 系统模糊（DWM 合成，移动零延迟；自己抓屏 + WPF BlurEffect 因拖动卡顿已废弃），**液态玻璃**刻意不做模糊、与岛同款清晰透明；窗口区域自裁圆角（accent 模糊是窗口级的，面板必须等于窗口，否则边距会露出模糊层 = "两层"）；`ResolveBackdrop` 纯函数钉住三档语义 |
+| 设置窗口材质 | `Platform/WindowMaterial.cs` | 分层窗（`AllowsTransparency`，四角真透明无黑框）；材质由 `theme` 推导（`SettingsWindow.MaterialFor`）：**亚克力**走 accent 系统模糊（DWM 合成、移动零延迟），**液态玻璃**与岛同款清晰透明；色调只画一次（亚克力交给 DWM、玻璃由 WPF 画并跟随透明度）；圆角只有亚克力裁窗口区域（`NeedsRegion`），玻璃由 Border 自绘避免锯齿弧 |
 | 岛设置（主页式） | `Ui/SettingsWindow.cs` | 左侧五个分区（外观 / 位置与大小 / 显示内容 / 歌词 / 关于）+ 右侧内容，820×580 固定尺寸；含界面材质三档、岛主题四选一、背景透明度（滑杆 + 三档预设）、胶囊/展开缩放、位置、显示器切换、组合模式与模块、网速、通知、自动隐藏、歌词（卡拉OK/延迟）、自启、诊断入口；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
 | 多显示器 | `Platform/Displays.cs` | 按工作区落位，拔屏自动回退 |
 | 自动隐藏 | `Ui/NativeIslandApp.cs`（`UpdateAutoHide`） | 默认关闭：无媒体且鼠标离开 10s 收起，光标到工作区顶部 4px 或媒体/通知/托盘唤出时恢复 |

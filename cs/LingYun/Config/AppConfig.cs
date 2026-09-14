@@ -73,10 +73,12 @@ public sealed class AppConfig
     /// <summary>背景不透明度（40–100%，只作用于背景类颜色，文字不变）。</summary>
     public int Opacity { get; set; } = 100;
     /// <summary>
-    /// 设置窗口材质：acrylic 亚克力（系统真模糊）/ glass 液态玻璃（近似，WPF 做不了折射）/
-    /// classic 原生 Windows（纯色 + 系统控件）。岛的材质在 <see cref="Theme"/> 里选。
+    /// 「外观」= 材质 + 深浅，两者联动（不再有独立的设置窗口材质）：
+    /// <see cref="Theme"/> 是最终生效值（dark/light/system/liquid-glass），
+    /// <see cref="BaseTheme"/> 记住"亚克力"档下的深浅，从液态玻璃切回来时用。
+    /// 设置窗口材质由 theme 推导：液态玻璃 → 同款半透明；其余 → 系统亚克力。
     /// </summary>
-    public string UiMaterial { get; set; } = "acrylic";
+    public string BaseTheme { get; set; } = "dark";
     /// <summary>
     /// 液态玻璃自适应（默认开）：抓岛背后那一小块桌面算亮度，自动在浅色玻璃（深字）
     /// 与深色玻璃（白字）之间切换，保证任何壁纸下文字都清楚。只对 theme=liquid-glass 生效。
@@ -186,7 +188,7 @@ public static class ConfigStore
         if (cfg.MediaStyle is not ("a" or "b" or "c")) cfg.MediaStyle = "a";
         if (cfg.AutoCollapseMs is < 0 or > 10000) cfg.AutoCollapseMs = 900;
         if (cfg.TopmostMode is not ("always" or "normal" or "auto")) cfg.TopmostMode = "always";
-        if (cfg.UiMaterial is not ("acrylic" or "glass" or "classic")) cfg.UiMaterial = "acrylic";
+        if (cfg.BaseTheme is not ("dark" or "light" or "system")) cfg.BaseTheme = "dark";
         cfg.Weekdays = cfg.Weekdays.Where(d => d is >= 1 and <= 7).Distinct().OrderBy(x => x).ToList();
         cfg.Dates = cfg.Dates
             .Where(d => DateTime.TryParse(d, out _))

@@ -51,13 +51,12 @@ public sealed class SettingsWindow : Window
     private readonly RadioButton _themeDark = new();
     private readonly RadioButton _themeLight = new();
     private readonly RadioButton _themeSystem = new();
-    private readonly RadioButton _themeLiquidGlass = new();
     private readonly RadioButton _styleA = new();
     private readonly RadioButton _styleB = new();
     private readonly RadioButton _styleC = new();
     private readonly RadioButton _matAcrylic = new();
     private readonly RadioButton _matGlass = new();
-    private readonly RadioButton _matClassic = new();
+
     private readonly RadioButton _topAlways = new();
     private readonly RadioButton _topNormal = new();
     private readonly RadioButton _topAuto = new();
@@ -165,7 +164,8 @@ public sealed class SettingsWindow : Window
         {
             PlaceBelowIsland();
             UpdatePanelClip();
-            WindowMaterial.ApplyRoundedRegion(this, WindowMaterial.Radius(_cfg.UiMaterial));
+            if (WindowMaterial.NeedsRegion(MaterialFor(_cfg.Theme)))
+                WindowMaterial.ApplyRoundedRegion(this, WindowMaterial.Radius(MaterialFor(_cfg.Theme)));
         };
         Loaded += (_, _) =>
         {
@@ -291,6 +291,7 @@ public sealed class SettingsWindow : Window
             Background = Brushes.Transparent, Foreground = _sub, Cursor = Cursors.Hand,
         };
         close.Click += (_, _) => Close();
+        _pushButtons.Add(close);   // 不加入就会被默认模板接管——悬停时出现方形边框
         Grid.SetColumn(close, 3);
         header.Children.Add(close);
         IslandPopupPlacer.EnableHeaderDrag(header, this);
@@ -344,7 +345,7 @@ public sealed class SettingsWindow : Window
     /// </summary>
     private void RefreshStates()
     {
-        bool classic = _cfg.UiMaterial == "classic";
+        bool classic = false;   // 经典档已移除；保留变量名避免大改
         foreach (var (key, btn) in _navButtons)
         {
             bool on = key == _currentSection;
@@ -382,34 +383,26 @@ public sealed class SettingsWindow : Window
     {
         var root = NewPane("look", "外观", "决定设置窗口与岛的材质、配色和透明度。");
 
-        AddGroupLabel(root, "设置窗口外观（只影响这个窗口）");
+        AddGroupLabel(root, "外观（岛与设置窗口同一套）");
         var card = NewCard(root);
-        AddRadioRow(card, "外观", new[]
+        AddRadioRow(card, "材质", new[] { ("亚克力", _matAcrylic), ("液态玻璃", _matGlass) }, "uimaterial");
+        _matAcrylic.Checked += (_, _) => SetAppearance(glass: false);
+        _matGlass.Checked += (_, _) => SetAppearance(glass: true);
+        AddRadioRow(card, "深浅", new[]
         {
-            ("亚克力 · 系统模糊", _matAcrylic), ("液态玻璃 · 同岛材质", _matGlass),
-            ("原生 Windows", _matClassic),
-        }, "uimaterial");
-        _matAcrylic.Checked += (_, _) => SetMaterial("acrylic");
-        _matGlass.Checked += (_, _) => SetMaterial("glass");
-        _matClassic.Checked += (_, _) => SetMaterial("classic");
+            ("深色", _themeDark), ("浅色", _themeLight), ("跟随系统", _themeSystem),
+        });
+        _themeDark.Checked += (_, _) => SetBaseTheme("dark");
+        _themeLight.Checked += (_, _) => SetBaseTheme("light");
+        _themeSystem.Checked += (_, _) => SetBaseTheme("system");
         _materialHint.FontSize = 11;
         _materialHint.Foreground = _dim;
         _materialHint.TextWrapping = TextWrapping.Wrap;
         _materialHint.Margin = new Thickness(88, 6, 14, 8);
         root.Children.Add(_materialHint);
-
-        AddGroupLabel(root, "岛（灵动岛本体）的材质与配色 —— 与上面的设置窗口互不影响");
+        AddGroupLabel(root, "媒体页");
         card = NewCard(root);
-        AddRadioRow(card, "主题", new[]
-        {
-            ("深色", _themeDark), ("浅色", _themeLight),
-            ("跟随系统", _themeSystem), ("液态玻璃", _themeLiquidGlass),
-        });
-        _themeDark.Checked += (_, _) => SetTheme("dark");
-        _themeLight.Checked += (_, _) => SetTheme("light");
-        _themeSystem.Checked += (_, _) => SetTheme("system");
-        _themeLiquidGlass.Checked += (_, _) => SetTheme("liquid-glass");
-        AddRadioRow(card, "媒体页", new[] { ("A · 精修", _styleA), ("B · 沉浸", _styleB), ("C · 氛围", _styleC) },
+        AddRadioRow(card, "样式", new[] { ("A · 精修", _styleA), ("B · 沉浸", _styleB), ("C · 氛围", _styleC) },
             "mediastyle");
         _styleA.Checked += (_, _) => SetMediaStyle("a");
         _styleB.Checked += (_, _) => SetMediaStyle("b");
@@ -425,6 +418,7 @@ public sealed class SettingsWindow : Window
             _cfg.Opacity = (int)v;
             _opacityLabel.Text = $"  {v:0}%";
             _island.ApplyConfig();
+            ApplyMaterial();   // 设置窗口的玻璃色调也跟着透明度走
         });
         AddOpacityPresets(card);
         AddHint(root, "只压背景与材质，文字和强调色不变；三档材质与液态玻璃都跟随。");
@@ -566,10 +560,11 @@ public sealed class SettingsWindow : Window
     // ==================================================================
     // 材质与配色
     // ==================================================================
-    private void SetMaterial(string material)
+    /// <summary>右键菜单/诊断用：直接指定材质（正常路径走 SetAppearance）。</summary>
+    internal void SetMaterialForTest(string material)
     {
         if (!_ready) return;
-        _cfg.UiMaterial = material;
+        _cfg.Theme = material == WindowMaterial.Glass ? "liquid-glass" : _cfg.BaseTheme;
         ApplyMaterial();
     }
 
@@ -577,9 +572,13 @@ public sealed class SettingsWindow : Window
     /// 应用界面材质：改画刷颜色、圆角、以及窗口的系统背景材质。
     /// 画刷是共用实例，改 Color 就会即时反映到所有控件上（不必重建控件树）。
     /// </summary>
+    /// <summary>设置窗口材质由主题推导：液态玻璃 → 同款半透明；其余 → 系统亚克力。</summary>
+    internal static string MaterialFor(string theme)
+        => IslandPalette.IsLiquidGlass(theme) ? WindowMaterial.Glass : WindowMaterial.Acrylic;
+
     private void ApplyMaterial()
     {
-        string material = _cfg.UiMaterial;
+        string material = MaterialFor(_cfg.Theme);
         _dark = !IslandPalette.ResolveLight(_cfg.Theme, IslandPalette.SystemUsesLightTheme());
 
         switch (material)
@@ -648,8 +647,21 @@ public sealed class SettingsWindow : Window
         _shell.BorderBrush = new SolidColorBrush(C(material == "classic"
             ? (_dark ? "#4a4a4a" : "#909090")
             : (_dark ? "#33ffffff" : "#2effffff")));
-        var tintColor = FromArgb(WindowMaterial.TintArgb(material, _dark));
-        _tintOverlay.Background = new SolidColorBrush(tintColor);
+        // 色调只画一次：亚克力由 DWM 的 accent 上色（我们这层设成全透明，
+        // 否则同一层色调被刷两遍——白底上能看出来的"两层"就是这么来的）；
+        // 液态玻璃没有系统模糊，色调由我们画，并跟随「背景透明度」滑杆。
+        int tintArgb = WindowMaterial.TintArgb(material, _dark);
+        if (material == WindowMaterial.Acrylic)
+        {
+            _tintOverlay.Background = Brushes.Transparent;
+        }
+        else
+        {
+            double op = Math.Clamp(_cfg.Opacity, 40, 100) / 100.0;
+            var tintColor = FromArgb(tintArgb);
+            _tintOverlay.Background = new SolidColorBrush(Color.FromArgb(
+                (byte)Math.Round(tintColor.A * op), tintColor.R, tintColor.G, tintColor.B));
+        }
         _shell.Background = null;                    // 色调交给 overlay（它在背景图之上）
         UpdatePanelClip();
 
@@ -660,14 +672,17 @@ public sealed class SettingsWindow : Window
         if (_ready || IsInitialized)
         {
             WindowMaterial.ApplyWindowChrome(this, _dark, material);
-            WindowMaterial.ApplyRoundedRegion(this, radius);
+            // 只有亚克力需要裁窗口区域（系统模糊铺满整矩形）；玻璃的圆角由我们自己画，
+            // 再裁一层 GDI 区域反而会多出一道锯齿弧（用户看到的"四角弧线"）
+            if (WindowMaterial.NeedsRegion(material))
+                WindowMaterial.ApplyRoundedRegion(this, radius);
             string effective = WindowMaterial.ResolveBackdrop(Environment.OSVersion.Version.Build, material);
             _materialHint.Text = material switch
             {
-                "classic" => "纯色面板 + 方角 + 系统控件长相；最清晰、最省资源。",
-                "glass" => "与岛同一套材质：清晰透明（不做模糊），背后内容直接透出来。"
-                           + "WPF 做不了边缘折射，这是它和岛上材质的唯一差别。",
-                _ => "系统合成器模糊（DWM）——桌面被糊在面板后面，窗口移动时跟手。"
+                "glass" => "与岛同一套材质：清晰透明（不做模糊），背后内容直接透出来，"
+                           + "跟随「背景透明度」。WPF 做不了边缘折射，这是它和岛上材质的唯一差别。",
+                _ => "岛与设置窗口都用亚克力：窗口是系统合成器模糊（DWM），"
+                     + "桌面被糊在面板后面、移动跟手。"
                      + (effective == "solid" ? "（当前系统不支持系统模糊，退化为纯色）" : ""),
             };
         }
@@ -749,16 +764,15 @@ public sealed class SettingsWindow : Window
     /// 控件的自定义模板（原型里是圆角药丸 / 开关 / 无边框按钮）。
     /// 为什么要自己写模板：WPF 按钮/单选/勾选框的**默认模板带 Aero 悬停蓝**，
     /// 在自定义配色的面板上非常突兀（用户反馈"左侧选中是蓝色太难看了"就是这个）。
-    /// 经典档反过来：显式交回系统默认模板，那才是"原生 Windows"该有的长相。
+    /// （"原生 Windows"档已按用户要求移除，这里不再有"交回系统默认模板"的分支。）
     /// </summary>
     private void ApplyControlStyles()
     {
-        bool classic = _cfg.UiMaterial == "classic";
-        double r = classic ? 0 : 8;
-        foreach (var b in _navList) b.Style = classic ? null : FlatButton(r);
-        foreach (var b in _pushButtons) b.Style = classic ? null : FlatButton(r);
-        foreach (var rb in _pillRadios) rb.Style = classic ? null : PillRadio(r);
-        var switchStyle = classic ? null : SwitchStyle(_accent.Color);
+        double r = 8;
+        foreach (var b in _navList) b.Style = FlatButton(r);
+        foreach (var b in _pushButtons) b.Style = FlatButton(r);
+        foreach (var rb in _pillRadios) rb.Style = PillRadio(r);
+        var switchStyle = SwitchStyle(_accent.Color);
         foreach (var cb in _switchChecks) cb.Style = switchStyle;
     }
 
@@ -863,14 +877,11 @@ public sealed class SettingsWindow : Window
     // ==================================================================
     private void Backfill()
     {
-        _matAcrylic.IsChecked = _cfg.UiMaterial == "acrylic";
-        _matGlass.IsChecked = _cfg.UiMaterial == "glass";
-        _matClassic.IsChecked = _cfg.UiMaterial == "classic";
-
-        _themeDark.IsChecked = !IslandPalette.ResolveLight(_cfg.Theme, false) && _cfg.Theme != "system";
-        _themeLight.IsChecked = string.Equals(_cfg.Theme, "light", StringComparison.OrdinalIgnoreCase);
-        _themeSystem.IsChecked = string.Equals(_cfg.Theme, "system", StringComparison.OrdinalIgnoreCase);
-        _themeLiquidGlass.IsChecked = IslandPalette.IsLiquidGlass(_cfg.Theme);
+        _matAcrylic.IsChecked = !IslandPalette.IsLiquidGlass(_cfg.Theme);
+        _matGlass.IsChecked = IslandPalette.IsLiquidGlass(_cfg.Theme);
+        _themeDark.IsChecked = _cfg.BaseTheme == "dark";
+        _themeLight.IsChecked = _cfg.BaseTheme == "light";
+        _themeSystem.IsChecked = _cfg.BaseTheme == "system";
         _styleA.IsChecked = _cfg.MediaStyle != "b" && _cfg.MediaStyle != "c";
         _styleB.IsChecked = _cfg.MediaStyle == "b";
         _styleC.IsChecked = _cfg.MediaStyle == "c";
@@ -917,12 +928,25 @@ public sealed class SettingsWindow : Window
             : $"当前：第 {current + 1} 块 / 共 {count} 块";
     }
 
-    private void SetTheme(string theme)
+    /// <summary>
+    /// 外观两档之一：亚克力（= 深浅三选一 + 系统模糊）/ 液态玻璃（岛与窗口同款半透明）。
+    /// 深浅记在 BaseTheme 里，从玻璃切回来时恢复用户原来的选择。
+    /// </summary>
+    private void SetAppearance(bool glass)
     {
         if (!_ready) return;
-        _cfg.Theme = theme;
+        _cfg.Theme = glass ? "liquid-glass" : _cfg.BaseTheme;
         _island.ApplyConfig();
-        ApplyMaterial();   // 深/浅变了，设置窗口自己的配色也跟着走
+        ApplyMaterial();
+    }
+
+    private void SetBaseTheme(string theme)
+    {
+        if (!_ready) return;
+        _cfg.BaseTheme = theme;
+        if (!IslandPalette.IsLiquidGlass(_cfg.Theme)) _cfg.Theme = theme;   // 玻璃档下只记住，不切材质
+        _island.ApplyConfig();
+        ApplyMaterial();
     }
 
     /// <summary>置顶层级：改完立刻重算（auto 模式下前台全屏时让位）。</summary>
@@ -955,6 +979,7 @@ public sealed class SettingsWindow : Window
     {
         _matAcrylic.IsChecked = true;
         _themeDark.IsChecked = true;
+        _cfg.BaseTheme = "dark";
         _styleA.IsChecked = true;
         _compact.Value = 100;
         _expanded.Value = 100;

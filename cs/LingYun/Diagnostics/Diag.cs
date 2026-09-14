@@ -137,7 +137,7 @@ internal static class Diag
                     && args[at + 2] is "acrylic" or "glass" or "classic" ? args[at + 2] : "";
 
                 var smokeCfg = new AppConfig { Theme = "system", Composite = true, Opacity = 60 };
-                if (material.Length > 0) smokeCfg.UiMaterial = material;
+                if (material.Length > 0) smokeCfg.Theme = material == "glass" ? "liquid-glass" : smokeCfg.BaseTheme;
                 using var smokeMedia = new MediaSessionService();
                 using var smokeIsland = new NativeIslandApp(smokeCfg, smokeMedia);
                 var win = new Ui.SettingsWindow(smokeCfg, smokeIsland, () => { });
@@ -155,7 +155,7 @@ internal static class Diag
                         System.Windows.Threading.Dispatcher.PushFrame(frame);
                         Thread.Sleep(40);
                     }
-                    w.WriteLine($"设置窗口：停留 {seconds}s（材质 {smokeCfg.UiMaterial}）供截图核对");
+                    w.WriteLine($"设置窗口：停留 {seconds}s（主题 {smokeCfg.Theme}）供截图核对");
                 }
                 win.Close();
                 // 液态玻璃 + 40% 也走一遍：确认新主题的单选回填与透明度预设不抛
@@ -2060,11 +2060,15 @@ internal static class Diag
                 && ConfigStore.Normalize(new AppConfig { MediaStyle = "c" }).MediaStyle == "c");
 
             // 设置窗口材质：三档取值 + 按系统版本选实现（Win11 背景材质 / Win10 合成属性 / 纯色）
-            Check("界面材质：Normalize 接受三档、拒绝乱值、默认亚克力",
-                new AppConfig().UiMaterial == "acrylic"
-                && ConfigStore.Normalize(new AppConfig { UiMaterial = "glass" }).UiMaterial == "glass"
-                && ConfigStore.Normalize(new AppConfig { UiMaterial = "classic" }).UiMaterial == "classic"
-                && ConfigStore.Normalize(new AppConfig { UiMaterial = "neon" }).UiMaterial == "acrylic");
+            Check("外观：材质由主题推导（液态玻璃 → 同款材质，其余 → 亚克力）",
+                Ui.SettingsWindow.MaterialFor("liquid-glass") == Platform.WindowMaterial.Glass
+                && Ui.SettingsWindow.MaterialFor("dark") == Platform.WindowMaterial.Acrylic
+                && Ui.SettingsWindow.MaterialFor("light") == Platform.WindowMaterial.Acrylic
+                && Ui.SettingsWindow.MaterialFor("system") == Platform.WindowMaterial.Acrylic);
+            Check("外观：BaseTheme 记住亚克力档的深浅、拒绝乱值",
+                new AppConfig().BaseTheme == "dark"
+                && ConfigStore.Normalize(new AppConfig { BaseTheme = "system" }).BaseTheme == "system"
+                && ConfigStore.Normalize(new AppConfig { BaseTheme = "zzz" }).BaseTheme == "dark");
             Check("界面材质：亚克力走系统模糊（DWM，移动零延迟）",
                 Platform.WindowMaterial.ResolveBackdrop(17134, "acrylic") == "dwm-acrylic"
                 && Platform.WindowMaterial.ResolveBackdrop(26100, "acrylic") == "dwm-acrylic"
@@ -2074,13 +2078,14 @@ internal static class Diag
             Check("界面材质：液态玻璃与岛同款（清晰透明，不做模糊）",
                 Platform.WindowMaterial.ResolveBackdrop(26100, "glass") == "translucent"
                 && Platform.WindowMaterial.ResolveBackdrop(17134, "glass") == "translucent");
-            Check("界面材质：老系统与经典档退回纯色（不假装有模糊）",
-                Platform.WindowMaterial.ResolveBackdrop(10240, "acrylic") == "solid"
-                && Platform.WindowMaterial.ResolveBackdrop(26100, "classic") == "solid");
-            Check("界面材质：玻璃/亚克力都带 alpha（真透），经典档不透明",
+            Check("界面材质：老系统退回纯色（不假装有模糊）",
+                Platform.WindowMaterial.ResolveBackdrop(10240, "acrylic") == "solid");
+            Check("界面材质：玻璃/亚克力色调都带 alpha（真透）",
                 (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF) is > 0x80 and < 0xF0
-                && (Platform.WindowMaterial.TintArgb("acrylic", false) >> 24 & 0xFF) is > 0x60 and < 0xF0
-                && (Platform.WindowMaterial.TintArgb("classic", false) >> 24 & 0xFF) == 0xFF);
+                && (Platform.WindowMaterial.TintArgb("acrylic", false) >> 24 & 0xFF) is > 0x60 and < 0xF0);
+            Check("界面材质：只有亚克力需要裁窗口区域（玻璃的四角由我们自己画）",
+                Platform.WindowMaterial.NeedsRegion("acrylic")
+                && !Platform.WindowMaterial.NeedsRegion("glass"));
             Check("媒体页样式：Normalize 只认 a/b/c（卡片 D 已按用户要求移除）",
                 ConfigStore.Normalize(new AppConfig { MediaStyle = "d" }).MediaStyle == "a");
             {

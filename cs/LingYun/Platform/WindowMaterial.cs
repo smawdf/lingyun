@@ -31,7 +31,6 @@ internal static class WindowMaterial
 {
     public const string Acrylic = "acrylic";
     public const string Glass = "glass";
-    public const string Classic = "classic";
 
     /// <summary>Win10 1803（17134）起支持 SetWindowCompositionAttribute 的亚克力模糊。</summary>
     private const int BuildAcrylicBlur = 17134;
@@ -73,7 +72,6 @@ internal static class WindowMaterial
     /// </summary>
     internal static string ResolveBackdrop(int osBuild, string material)
     {
-        if (material == Classic) return "solid";
         // 液态玻璃这一档刻意**不做**系统模糊：它要和岛的材质一模一样（清晰透明），
         // 模糊只有亚克力才用。两者是"两种观感"，不是同一套东西的浓淡。
         if (material == Glass) return "translucent";
@@ -86,16 +84,14 @@ internal static class WindowMaterial
         {
             // 液态玻璃 = 岛上那套半透明材质（不模糊、背后内容直接透出来）；亚克力走系统模糊，色调可薄一些
             Glass => dark ? unchecked((int)0xA6121418) : unchecked((int)0xA6FFFFFF),
-            Classic => dark ? unchecked((int)0xFF202020) : unchecked((int)0xFFF0F0F0),
             _ => dark ? unchecked((int)0x861A1B20) : unchecked((int)0x7AF2F4F8),   // acrylic
         };
 
-    /// <summary>面板圆角（DIP）。</summary>
-    internal static double Radius(string material)
-        => material switch { Classic => 0, Glass => 20, _ => 10 };
+    /// <summary>面板圆角（DIP）：玻璃大圆角（圆角由我们自己画），亚克力跟 DWM 的观感走。</summary>
+    internal static double Radius(string material) => material == Glass ? 20 : 10;
 
-    /// <summary>是否画落影（经典档不要）。</summary>
-    internal static bool HasShadow(string material) => material != Classic;
+    /// <summary>是否需要裁窗口区域：只有亚克力要（系统模糊会铺满整个矩形，不裁会露出方角）。</summary>
+    internal static bool NeedsRegion(string material) => material != Glass;
 
     [DllImport("gdi32.dll")]
     private static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int w, int h);

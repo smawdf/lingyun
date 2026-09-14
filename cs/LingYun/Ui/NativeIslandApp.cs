@@ -956,16 +956,12 @@ public sealed class NativeIslandApp : IDisposable
                             return;
                         }
                     }
-                    // 页签条上的空白也算导航区：吃掉落点，别穿透到"点空白收起"
-                    TraceClick("tab band but no tab hit (swallowed)");
+                    // 点页签条上的空白 = 点空白处：按统一规则收起（用户要的行为：
+                    // ✕ 已移除，展开后点顶部/其他地方都收起）
+                    TraceClick("tab band but no tab hit -> collapse");
+                    CollapseOnBlank();
                     return;
                 }
-            }
-            // ✕
-            if (x >= ix + iw - 40 && x <= ix + iw - 8 && y >= iy + 6 && y <= iy + 34)
-            {
-                SetMode("compact");
-                return;
             }
             // 「计划」页：开关 / 时间卡 / 动作分段 / 同时暂停 / 星期方块（绘制与命中共用 PlanLayout）
             if (PageHandlerOwnsClick(mediaView, _page, 0))
@@ -2428,8 +2424,7 @@ public sealed class NativeIslandApp : IDisposable
 
     private void DrawExpanded(SKCanvas canvas, SKRect r, float s)
     {
-        // 关闭钮（三种媒体样式共用右上角位置）
-        DrawText(canvas, "✕", r.Right - 28 * s, r.Top + 24 * s, 14 * s, Pal.Sub);
+        // 展开态没有关闭钮（用户要求移除）：收起靠点空白处 / 顶部空白 / 自动回缩
 
         if (_focus == "media" && MediaActive)
         {
