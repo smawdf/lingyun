@@ -116,7 +116,9 @@ public sealed class SettingsWindow : Window
         MinWidth = 620;
         MinHeight = 420;
         ShowInTaskbar = false;
-        Topmost = true;
+        // 不再强制置顶（用户反馈"为什么一直置顶"）：岛在编辑窗打开期间会自己让出置顶，
+        // 所以这里保持普通层级，被别的窗口盖住是正常行为
+        Topmost = false;
         // 关键：AllowsTransparency=true 会让 WPF 走"逐像素 alpha 的分层窗"——
         // 和岛同一套机制。普通窗口里 Transparent 像素对 DWM 就是不透明黑，
         // 圆角外和边缘会直接变黑（用户看到的"黑框"就是这么来的）。
@@ -175,7 +177,7 @@ public sealed class SettingsWindow : Window
         };
         SizeChanged += (_, _) =>
         {
-            PlaceBelowIsland();
+            // 只重算圆角/裁剪——**不要重新落位**：那会在拖边缘时把窗口边拉边挪，看着像弹跳
             UpdatePanelClip();
             string m = MaterialFor(_cfg.Theme);
             WindowMaterial.ApplyRoundedRegion(this,
