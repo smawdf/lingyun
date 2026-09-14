@@ -2238,7 +2238,8 @@ public sealed class NativeIslandApp : IDisposable
                     BgBar: bar,
                     Home: new SKRect(r.MidX - 38 * s, barCy - 13 * s, r.MidX + 38 * s, barCy + 13 * s),
                     VolGlyph: new SKRect(R - 136 * s, barCy - 12 * s, R - 112 * s, barCy + 12 * s),
-                    VolTrack: VolumePopup(new SKRect(R - 136 * s, barCy - 12 * s, R - 112 * s, barCy + 12 * s), s),
+                    VolTrack: VolumePopup(new SKRect(R - 136 * s, barCy - 12 * s, R - 112 * s, barCy + 12 * s),
+                        s, above: bar.Top),
                     Prev: new SKRect(L + 30 * s, barCy - 15 * s, L + 60 * s, barCy + 15 * s),
                     Play: new SKRect(L + 62 * s, barCy - 19 * s, L + 100 * s, barCy + 19 * s),
                     Next: new SKRect(L + 102 * s, barCy - 15 * s, L + 132 * s, barCy + 15 * s),
@@ -2291,8 +2292,12 @@ public sealed class NativeIslandApp : IDisposable
     /// 音量竖向弹出条的命中矩形（画在喇叭图标正上方）。
     /// 点击图标只弹出它，不再常驻一条横向长条——顶部 28 是静音开关，下面是竖槽。
     /// </summary>
-    internal static SKRect VolumePopup(SKRect glyph, float s)
-        => new(glyph.MidX - 20 * s, glyph.Top - 136 * s, glyph.MidX + 20 * s, glyph.Top - 6 * s);
+    /// <param name="above">弹出条底边的上限（沉浸样式的图标在控制条里，要传控制条顶边）。</param>
+    internal static SKRect VolumePopup(SKRect glyph, float s, float? above = null)
+    {
+        float bottom = (above ?? glyph.Top) - 6 * s;
+        return new SKRect(glyph.MidX - 20 * s, bottom - 130 * s, glyph.MidX + 20 * s, bottom);
+    }
 
     /// <summary>竖槽（弹出条内部，去掉顶部静音行与内边距）。</summary>
     internal static SKRect VolumeGroove(SKRect popup, float s)
