@@ -72,6 +72,30 @@ public sealed class BackdropSampler : IDisposable
         }
     }
 
+    /// <summary>
+    /// 抓一块屏幕原始像素（BGRA，top-down）。给设置窗口当"背景模糊"的素材用：
+    /// 那里和岛一样是分层窗、拿不到背后内容，只能自己抓。
+    /// 采的是屏幕合成结果——调用方要保证自己那个窗口已经从捕获里排除
+    /// （WDA_EXCLUDEFROMCAPTURE，见 WindowMaterial.ExcludeFromCapture）。
+    /// </summary>
+    public byte[]? CaptureBgra(int x, int y, int w, int h)
+    {
+        if (_disposed || w <= 0 || h <= 0) return null;
+        try
+        {
+            if (!EnsureSurface(w, h)) return null;
+            if (!Native.BitBlt(_hdcMem, 0, 0, w, h, _hdcScreen, x, y, 0x00CC0020)) return null;
+            int bytes = w * h * 4;
+            var buf = new byte[bytes];
+            System.Runtime.InteropServices.Marshal.Copy(_bits, buf, 0, bytes);
+            return buf;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>按尺寸准备 DIB（同尺寸复用；尺寸变化才重建）。</summary>
     private bool EnsureSurface(int w, int h)
     {

@@ -2050,19 +2050,20 @@ internal static class Diag
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "glass" }).UiMaterial == "glass"
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "classic" }).UiMaterial == "classic"
                 && ConfigStore.Normalize(new AppConfig { UiMaterial = "neon" }).UiMaterial == "acrylic");
-            Check("界面材质：Win10 1803+ 都用 SetWindowCompositionAttribute 的模糊",
-                Platform.WindowMaterial.ResolveBackdrop(17763, "glass") == "blur-behind"
-                && Platform.WindowMaterial.ResolveBackdrop(19045, "acrylic") == "blur-behind"
-                && Platform.WindowMaterial.ResolveBackdrop(26100, "acrylic") == "blur-behind"
-                    // 不再走 Win11 的 DWMWA_SYSTEMBACKDROP_TYPE：配 WindowStyle=None 不可靠，
-                    // 而且它自带的 ~8px 圆角和我们要的大圆角对不齐（四角会露模糊层）
+            Check("界面材质：Win10 2004+ 自己抓屏做背景模糊（不再依赖系统亚克力）",
+                Platform.WindowMaterial.ResolveBackdrop(19041, "acrylic") == "capture-blur"
+                && Platform.WindowMaterial.ResolveBackdrop(26100, "glass") == "capture-blur"
+                    // 不再走 SetWindowCompositionAttribute / DWMWA_SYSTEMBACKDROP_TYPE：
+                    // 普通窗口里 Transparent 像素对 DWM 是不透明黑（黑框来源），
+                    // 现在窗口是分层窗（AllowsTransparency），背景模糊自己抓自己糊
                 );
-            Check("界面材质：老系统与经典档都退回纯色（不假装有模糊）",
-                Platform.WindowMaterial.ResolveBackdrop(10240, "acrylic") == "solid"
+            Check("界面材质：老系统退化为纯色调、经典档纯色",
+                Platform.WindowMaterial.ResolveBackdrop(17763, "acrylic") == "tint"
                 && Platform.WindowMaterial.ResolveBackdrop(26100, "classic") == "solid");
-            Check("界面材质：亚克力/玻璃的面板色调带 alpha（真透），经典档不透明",
-                (Platform.WindowMaterial.TintArgb("acrylic", false) >> 24 & 0xFF) is > 0x60 and < 0xF0
-                && (Platform.WindowMaterial.TintArgb("glass", true) >> 24 & 0xFF) is > 0x60 and < 0xF0
+            Check("界面材质：玻璃比亚克力更透，经典档不透明",
+                (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF)
+                    < (Platform.WindowMaterial.TintArgb("acrylic", false) >> 24 & 0xFF)
+                && (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF) is > 0x50 and < 0xC0
                 && (Platform.WindowMaterial.TintArgb("classic", false) >> 24 & 0xFF) == 0xFF);
             Check("媒体页标题：短标题单行、长标题两行且第二行带省略号",
                 NativeIslandApp.WrapTwoLines("夜曲", 300, 18, SKFontStyleWeight.SemiBold).Length == 1
