@@ -58,6 +58,12 @@ public sealed class SettingsWindow : Window
     private readonly RadioButton _matClassic = new();
     private readonly TextBlock _materialHint = new();
     private readonly Dictionary<string, CheckBox> _checks = new();
+    // 需要自定义长相的控件（原型里是圆角药丸 / 开关 / 无边框按钮；经典档交回系统默认模板）
+    private readonly List<Button> _pushButtons = new();
+    private readonly List<RadioButton> _pillRadios = new();
+    private readonly List<CheckBox> _switchChecks = new();
+    private readonly List<Button> _navList = new();
+    private string _hoverKey = "";
 
     // ---- 材质化画刷：整个窗口共用这几个实例，换材质只改 Color，控件自动跟着变 ----
     private readonly SolidColorBrush _fg = new();
@@ -67,6 +73,10 @@ public sealed class SettingsWindow : Window
     private readonly SolidColorBrush _line = new();
     private readonly SolidColorBrush _accent = new();
     private readonly SolidColorBrush _hover = new();
+    private readonly SolidColorBrush _hoverSoft = new();
+    private readonly SolidColorBrush _navEdge = new();
+    private readonly SolidColorBrush _accentSoft = new();
+    private readonly SolidColorBrush _accentEdge = new();
     private readonly Border _shell = new();
     private readonly StackPanel _nav = new();
     private readonly Grid _panes = new();
@@ -192,9 +202,17 @@ public sealed class SettingsWindow : Window
         return root;
     }
 
+    /// <summary>自测用：标题栏元素（验证"空白处也能命中 → 可拖动"）。</summary>
+    internal FrameworkElement TitleBarForTest => _header;
+
+    private readonly Grid _header = new() { Margin = new Thickness(22, 16, 16, 8) };
+
     private FrameworkElement BuildTitleBar()
     {
-        var header = new Grid { Margin = new Thickness(22, 16, 16, 8) };
+        var header = _header;
+        // 必须给个 Transparent 背景：WPF 里 Background=null 的容器不参与命中测试，
+        // 否则标题栏只有文字/按钮能点，其余区域拖不动（用户反馈的"不能拖动"就是这个）
+        header.Background = Brushes.Transparent;   // Transparent 参与命中，null 不参与
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition());
@@ -236,15 +254,19 @@ public sealed class SettingsWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(12, 9, 10, 9),
             Margin = new Thickness(0, 0, 0, 2),
-            BorderThickness = new Thickness(0),
+            BorderThickness = new Thickness(1),
             Background = Brushes.Transparent,
+            BorderBrush = Brushes.Transparent,
             Foreground = _sub,
             FontSize = 12.5,
             Cursor = Cursors.Hand,
             Tag = key,
         };
         nav.Click += (_, _) => SelectSection(key);
+        nav.MouseEnter += (_, _) => { _hoverKey = key; RefreshStates(); };
+        nav.MouseLeave += (_, _) => { if (_hoverKey == key) _hoverKey = ""; RefreshStates(); };
         _navButtons[key] = nav;
+        _navList.Add(nav);
         _nav.Children.Add(nav);
 
         pane.Visibility = Visibility.Collapsed;
@@ -253,16 +275,52 @@ public sealed class SettingsWindow : Window
 
     private void SelectSection(string key)
     {
-        foreach (var (k, btn) in _navButtons)
-        {
-            bool on = k == key;
-            btn.Foreground = on ? _fg : _sub;
-            btn.FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal;
-            btn.Background = on ? _hover : Brushes.Transparent;
-        }
+        _currentSection = key;
         foreach (UIElement child in _panes.Children)
             child.Visibility = child is FrameworkElement fe && fe.Tag as string == key
                 ? Visibility.Visible : Visibility.Collapsed;
+        RefreshStates();
+    }
+
+    /// <summary>当前分区（换材质/主题后刷新导航配色要用）。</summary>
+    private string _currentSection = "";
+
+    /// <summary>
+    /// 统一刷新所有控件的状态配色。
+    /// 不用 XAML 触发器是为了让颜色跟着材质/明暗走：画刷是共用实例，这里只改 Color，
+    /// 已挂上去的控件会即时跟着变。
+    /// </summary>
+    private void RefreshStates()
+    {
+        bool classic = _cfg.UiMaterial == "classic";
+        foreach (var (key, btn) in _navButtons)
+        {
+            bool on = key == _currentSection;
+            bool hovered = key == _hoverKey;
+            btn.Foreground = on ? _fg : _sub;
+            btn.FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal;
+            btn.Background = on ? _hover : hovered ? _hoverSoft : Brushes.Transparent;
+            btn.BorderBrush = on && !classic ? _navEdge : Brushes.Transparent;
+        }
+        foreach (var b in _pushButtons)
+        {
+            b.Foreground = _fg;
+            b.Background = _card;
+            b.BorderBrush = _line;
+        }
+        foreach (var rb in _pillRadios)
+        {
+            bool on = rb.IsChecked == true;
+            rb.Foreground = on ? _accent : _sub;
+            rb.Background = on ? _accentSoft : Brushes.Transparent;
+            rb.BorderBrush = on ? _accentEdge : _line;
+        }
+        foreach (var cb in _switchChecks)
+        {
+            cb.Foreground = _fg;
+            cb.Background = _card;
+            cb.BorderBrush = _line;
+        }
     }
 
     // ==================================================================
@@ -460,6 +518,10 @@ public sealed class SettingsWindow : Window
                 _line.Color = C(_dark ? "#4a4a4a" : "#a0a0a0");
                 _accent.Color = C(_dark ? "#4cc2ff" : "#0078d4");
                 _hover.Color = C(_dark ? "#3a3a3a" : "#e5e5e5");
+                _hoverSoft.Color = C(_dark ? "#2a2a2a" : "#ededed");
+                _navEdge.Color = C(_dark ? "#4a4a4a" : "#a0a0a0");
+                _accentSoft.Color = C(_dark ? "#4cc2ff" : "#0078d4");
+                _accentEdge.Color = Brushes.Transparent.Color;
                 _shell.CornerRadius = new CornerRadius(0);
                 _shell.Background = new SolidColorBrush(C(_dark ? "#202020" : "#f0f0f0"));
                 _shell.BorderBrush = new SolidColorBrush(C(_dark ? "#4a4a4a" : "#909090"));
@@ -472,6 +534,10 @@ public sealed class SettingsWindow : Window
                 _line.Color = C(_dark ? "#2effffff" : "#3a000000");
                 _accent.Color = C(_dark ? "#60cdff" : "#0a72dc");
                 _hover.Color = C(_dark ? "#26ffffff" : "#1a0a72dc");
+                _hoverSoft.Color = C(_dark ? "#14ffffff" : "#0f0a72dc");
+                _navEdge.Color = C(_dark ? "#33ffffff" : "#26000000");
+                _accentSoft.Color = C(_dark ? "#2660cdff" : "#220a72dc");
+                _accentEdge.Color = C(_dark ? "#5560cdff" : "#550a72dc");
                 _shell.CornerRadius = new CornerRadius(20);
                 _shell.Background = _dark
                     ? new LinearGradientBrush(C("#b812141a"), C("#cc0a0b0e"), 90)
@@ -486,6 +552,10 @@ public sealed class SettingsWindow : Window
                 _line.Color = C(_dark ? "#26ffffff" : "#22000000");
                 _accent.Color = C(_dark ? "#60cdff" : "#0a7af0");
                 _hover.Color = C(_dark ? "#1fffffff" : "#14000000");
+                _hoverSoft.Color = C(_dark ? "#12ffffff" : "#0a000000");
+                _navEdge.Color = C(_dark ? "#2affffff" : "#1f000000");
+                _accentSoft.Color = C(_dark ? "#2860cdff" : "#1f0a7af0");
+                _accentEdge.Color = C(_dark ? "#5560cdff" : "#550a7af0");
                 _shell.CornerRadius = new CornerRadius(10);
                 // 面板要够厚：系统模糊只让 15% 背景透上来，否则背后是深色窗口时
                 // 面板会变灰、深色文字对比度不稳（和岛那边"浅色材质必须够厚"是同一条结论）
@@ -507,22 +577,124 @@ public sealed class SettingsWindow : Window
                      + (effective == "solid" ? "（当前系统不支持，退化为纯色）" : "系统模糊已生效。"),
             };
         }
-        ApplyNavSelectionLook();
-    }
-
-    /// <summary>换材质后刷新导航选中态配色（选中态用的是 _hover/_fg 实例颜色）。</summary>
-    private void ApplyNavSelectionLook()
-    {
-        foreach (var (key, btn) in _navButtons)
-        {
-            bool on = btn.FontWeight == FontWeights.SemiBold;
-            btn.Foreground = on ? _fg : _sub;
-            btn.Background = on ? _hover : Brushes.Transparent;
-            if (btn.Tag is string _) { }
-        }
+        ApplyControlStyles();
+        RefreshStates();
     }
 
     private static Color C(string hex) => (Color)ColorConverter.ConvertFromString(hex);
+
+    /// <summary>
+    /// 控件的自定义模板（原型里是圆角药丸 / 开关 / 无边框按钮）。
+    /// 为什么要自己写模板：WPF 按钮/单选/勾选框的**默认模板带 Aero 悬停蓝**，
+    /// 在自定义配色的面板上非常突兀（用户反馈"左侧选中是蓝色太难看了"就是这个）。
+    /// 经典档反过来：显式交回系统默认模板，那才是"原生 Windows"该有的长相。
+    /// </summary>
+    private void ApplyControlStyles()
+    {
+        bool classic = _cfg.UiMaterial == "classic";
+        double r = classic ? 0 : 8;
+        foreach (var b in _navList) b.Style = classic ? null : FlatButton(r);
+        foreach (var b in _pushButtons) b.Style = classic ? null : FlatButton(r);
+        foreach (var rb in _pillRadios) rb.Style = classic ? null : PillRadio(r);
+        var switchStyle = classic ? null : SwitchStyle(_accent.Color);
+        foreach (var cb in _switchChecks) cb.Style = switchStyle;
+    }
+
+    /// <summary>扁平按钮：只保留填充/描边/圆角，悬停只轻微压暗——把 Aero 的蓝色悬停彻底去掉。</summary>
+    private static Style FlatButton(double r)
+    {
+        var style = new Style(typeof(Button));
+        var template = new ControlTemplate(typeof(Button));
+        var border = new FrameworkElementFactory(typeof(Border), "bd");
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+        border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(r));
+        border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Control.PaddingProperty));
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(FrameworkElement.HorizontalAlignmentProperty,
+            new TemplateBindingExtension(Control.HorizontalContentAlignmentProperty));
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        border.AppendChild(content);
+        template.VisualTree = border;
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(UIElement.OpacityProperty, 0.86, "bd"));
+        template.Triggers.Add(hover);
+        var press = new Trigger { Property = Button.IsPressedProperty, Value = true };
+        press.Setters.Add(new Setter(UIElement.OpacityProperty, 0.72, "bd"));
+        template.Triggers.Add(press);
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        return style;
+    }
+
+    /// <summary>单选"药丸"：圆角边框 + 文字；选中/未选中的颜色由 RefreshStates 统一上。</summary>
+    private static Style PillRadio(double r)
+    {
+        var style = new Style(typeof(RadioButton));
+        var template = new ControlTemplate(typeof(RadioButton));
+        var border = new FrameworkElementFactory(typeof(Border), "bd");
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+        border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(r));
+        border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Control.PaddingProperty));
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        border.AppendChild(content);
+        template.VisualTree = border;
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(UIElement.OpacityProperty, 0.85, "bd"));
+        template.Triggers.Add(hover);
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        return style;
+    }
+
+    /// <summary>
+    /// 开关：轨道 + 圆钮。选中时圆钮右移、轨道染成强调色。
+    /// 强调色在**重建样式时**烤进模板：模板里的刷子会被 WPF 冻结，
+    /// 所以不能把共享的可变刷子交给模板，只能换材质时整份重建。
+    /// </summary>
+    private static Style SwitchStyle(Color onColor)
+    {
+        var style = new Style(typeof(CheckBox));
+        var template = new ControlTemplate(typeof(CheckBox));
+        var root = new FrameworkElementFactory(typeof(StackPanel));
+        root.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+
+        var track = new FrameworkElementFactory(typeof(Border), "track");
+        track.SetValue(FrameworkElement.WidthProperty, 38.0);
+        track.SetValue(FrameworkElement.HeightProperty, 21.0);
+        track.SetValue(Border.CornerRadiusProperty, new CornerRadius(11));
+        track.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        track.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+
+        var knob = new FrameworkElementFactory(typeof(Border), "knob");
+        knob.SetValue(FrameworkElement.WidthProperty, 17.0);
+        knob.SetValue(FrameworkElement.HeightProperty, 17.0);
+        knob.SetValue(Border.CornerRadiusProperty, new CornerRadius(9));
+        knob.SetValue(FrameworkElement.MarginProperty, new Thickness(2, 0, 0, 0));
+        knob.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+        knob.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        knob.SetValue(Border.BackgroundProperty, Brushes.White);
+        track.AppendChild(knob);
+        root.AppendChild(track);
+
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(FrameworkElement.MarginProperty, new Thickness(10, 0, 0, 0));
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        root.AppendChild(content);
+        template.VisualTree = root;
+
+        var on = new Trigger { Property = System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, Value = true };
+        on.Setters.Add(new Setter(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Right, "knob"));
+        on.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, 0, 2, 0), "knob"));
+        var onBrush = new SolidColorBrush(onColor);
+        onBrush.Freeze();
+        on.Setters.Add(new Setter(Border.BackgroundProperty, onBrush, "track"));
+        template.Triggers.Add(on);
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        return style;
+    }
 
     // ==================================================================
     // 回填 / 交互
@@ -688,12 +860,18 @@ public sealed class SettingsWindow : Window
         root.Children.Add(grid);
     }
 
-    private Button NavStyleButton(string text, double width) => new()
+    private Button NavStyleButton(string text, double width)
     {
-        Content = text, Width = width, Height = 32,
-        FontSize = 12.5, Cursor = Cursors.Hand,
-        Foreground = _fg, Background = _card, BorderBrush = _line, BorderThickness = new Thickness(1),
-    };
+        var b = new Button
+        {
+            Content = text, Width = width, Height = 32,
+            FontSize = 12.5, Cursor = Cursors.Hand,
+            Foreground = _fg, Background = _card, BorderBrush = _line,
+            BorderThickness = new Thickness(1),
+        };
+        _pushButtons.Add(b);
+        return b;
+    }
 
     private void AddOpacityPresets(StackPanel root)
     {
@@ -733,10 +911,14 @@ public sealed class SettingsWindow : Window
         {
             btn.Content = text;
             btn.GroupName = group;
-            btn.Foreground = _fg;
+            btn.Foreground = _sub;
             btn.FontSize = 12;
-            btn.Margin = new Thickness(first ? 0 : 12, 0, 0, 0);
+            btn.Padding = new Thickness(11, 5, 11, 5);
+            btn.BorderThickness = new Thickness(1);
+            btn.Margin = new Thickness(first ? 0 : 8, 0, 0, 0);
             btn.Cursor = Cursors.Hand;
+            btn.Checked += (_, _) => RefreshStates();
+            _pillRadios.Add(btn);
             strip.Children.Add(btn);
             first = false;
         }
@@ -752,8 +934,9 @@ public sealed class SettingsWindow : Window
         box.Content = label;
         box.Foreground = _fg;
         box.FontSize = 12.5;
-        box.Margin = new Thickness(indent ? 18 : 0, 8, 0, 0);
+        box.Margin = new Thickness(indent ? 18 : 0, 10, 0, 0);
         box.Cursor = Cursors.Hand;
+        _switchChecks.Add(box);
         box.Checked += (_, _) => { if (_ready) apply(true); };
         box.Unchecked += (_, _) => { if (_ready) apply(false); };
         root.Children.Add(box);

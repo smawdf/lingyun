@@ -2160,6 +2160,32 @@ internal static class Diag
                     is { Red: 128, Green: 128, Blue: 128 }
                 && Ui.IslandPalette.Composite(new SKColor(255, 255, 255, 0), darkBg, 1.0).Red == darkBg.Red);
 
+            // 设置窗口：标题栏空白处必须能命中，否则拖不动（WPF 里 Background=null 的容器
+            // 不参与命中测试，鼠标事件落不到它身上——这个坑踩过一次，钉住）
+            using (var dragMedia = new MediaSessionService())
+            using (var dragIsland = new NativeIslandApp(new AppConfig(), dragMedia))
+            {
+                var dragWin = new Ui.SettingsWindow(new AppConfig(), dragIsland, () => { });
+                // 命中测试要求元素真的"可见"（IsVisible 只有窗口显示后才为 true），
+                // 所以把窗口挪到屏幕外再 Show，用户看不到闪烁
+                dragWin.Left = -2400;
+                dragWin.Top = -2400;
+                dragWin.Show();
+                dragWin.UpdateLayout();
+                var bar = dragWin.TitleBarForTest;
+                var hitMid = bar.InputHitTest(new System.Windows.Point(bar.RenderSize.Width * 0.5, bar.RenderSize.Height * 0.5));
+                var hitEmpty = bar.InputHitTest(new System.Windows.Point(bar.RenderSize.Width * 0.6, 4));
+                Check("设置窗口：标题栏空白处可命中（能拖动）",
+                    hitMid is not null && hitEmpty is not null,
+                    $"标题栏 {bar.RenderSize.Width:0}×{bar.RenderSize.Height:0}　"
+                    + $"mid={(hitMid?.GetType().Name ?? "null")} empty={(hitEmpty?.GetType().Name ?? "null")}");
+                Check("设置窗口：命中标题栏时不会落在按钮上（不会误触关闭）",
+                    hitMid is not System.Windows.Controls.Button
+                    && hitEmpty is not System.Windows.Controls.Button,
+                    hitMid?.GetType().Name ?? "null");
+                dragWin.Close();
+            }
+
             Check("自动隐藏：默认关闭时永不隐藏",
                 !NativeIslandApp.ShouldAutoHide(false, true, false, false, false, 999, 10));
             Check("自动隐藏：有媒体 / 有弹层 / 鼠标在岛上 / 未超时 都不隐藏",

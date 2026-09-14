@@ -18,6 +18,7 @@
 | 单实例 + 命名管道唤出 | `Platform/SingleInstance.cs` | 含 `WindowFocus`（跳源窗口） |
 | 开机自启 | `Platform/AutoStart.cs` | HKCU Run |
 | 托盘 | `Platform/TrayService.cs` | 显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 显示歌词 / 浅色主题 / 开机自启 / 退出 |
+| 设置窗口控件长相 | `Ui/SettingsWindow.cs`（模板部分） | 药丸单选 / 开关 / 扁平按钮都用自定义 ControlTemplate，**去掉 WPF 默认模板的 Aero 悬停蓝**；经典档显式交回系统默认模板；标题栏必须有 `Transparent` 背景（`null` 不参与命中测试 → 拖不动，自测用 `InputHitTest` 钉住） |
 | 设置窗口材质 | `Platform/WindowMaterial.cs` | Win11 `DWMWA_SYSTEMBACKDROP_TYPE` → Win10 `SetWindowCompositionAttribute` → 纯色，逐级回退（`ResolveBackdrop` 纯函数自测钉住）；圆角/深色标题栏走 DWM 属性 |
 | 岛设置（主页式） | `Ui/SettingsWindow.cs` | 左侧五个分区（外观 / 位置与大小 / 显示内容 / 歌词 / 关于）+ 右侧内容，820×580 固定尺寸；含界面材质三档、岛主题四选一、背景透明度（滑杆 + 三档预设）、胶囊/展开缩放、位置、显示器切换、组合模式与模块、网速、通知、自动隐藏、歌词（卡拉OK/延迟）、自启、诊断入口；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
 | 多显示器 | `Platform/Displays.cs` | 按工作区落位，拔屏自动回退 |
@@ -54,7 +55,7 @@
 B站站标 Always 策略、通知宽度/抢占规则、组合模式槽位与自动长度、卡拉OK进度与延迟补偿、
 性能采样、性能页网速开关、主题解析与不透明度、液态玻璃恒浅色与材质 alpha 单调、
 液态玻璃自适应（深/浅背景选材质、迟滞、白底翻深色、合成色）、透明底离屏 alpha 与深色材质白字、
-自动隐藏谓词、设置窗口材质三档与系统版本回退链等，共 170 条）。
+自动隐藏谓词、设置窗口材质三档与系统版本回退链、标题栏命中测试等，共 172 条）。
 
 ## 构建 / 运行
 
@@ -78,7 +79,7 @@ Copy-Item -Force publish\lingyun.exe ..\..\lingyun.exe
 ## 诊断
 
 ```powershell
-lingyun.exe --self-test          # 170 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质/自适应与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
+lingyun.exe --self-test          # 172 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质/自适应与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
 lingyun.exe --self-test --diag-quick   # 自测 + 快捷页契约报告（写 灵云-diag.txt）
 lingyun.exe --dump-frames        # 离屏渲染各状态帧（写 灵云-diag/*.png）；含 -glass 液态玻璃帧
 lingyun.exe --backdrop-probe 20  # 真机验证自适应输入：采到的是背景还是岛自己 + 单次耗时 + 决策预览
