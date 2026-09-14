@@ -18,14 +18,14 @@
 | 单实例 + 命名管道唤出 | `Platform/SingleInstance.cs` | 含 `WindowFocus`（跳源窗口） |
 | 开机自启 | `Platform/AutoStart.cs` | HKCU Run |
 | 托盘 | `Platform/TrayService.cs` | 显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 显示歌词 / 浅色主题 / 开机自启 / 退出 |
-| 岛设置 | `Ui/SettingsWindow.cs` | 主题（深/浅/跟随系统）+ 不透明度 + 胶囊/展开缩放 + 位置 + 组合模式 + 性能页网速 + 通知 + 自动隐藏 + 歌词（卡拉OK/延迟）+ 版本号；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
+| 岛设置 | `Ui/SettingsWindow.cs` | 主题（深/浅/跟随系统/**液态玻璃**）+ 背景透明度（40–100% 滑杆 + 轻透/半透/不透明三档预设）+ 胶囊/展开缩放 + 位置 + 组合模式 + 性能页网速 + 通知 + 自动隐藏 + 歌词（卡拉OK/延迟）+ 版本号；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
 | 多显示器 | `Platform/Displays.cs` | 按工作区落位，拔屏自动回退 |
 | 自动隐藏 | `Ui/NativeIslandApp.cs`（`UpdateAutoHide`） | 默认关闭：无媒体且鼠标离开 10s 收起，光标到工作区顶部 4px 或媒体/通知/托盘唤出时恢复 |
 | 系统通知 | `Services/ToastService.cs` | WinRT `UserNotificationListener` 轮询；启动高水位（历史通知不回放）、带 AUMID/Id |
 | 通知点击唤醒 | `Services/AppActivatorService.cs` | 三级激活：WinRT 包激活 → COM 激活管理器 → 按进程名/标题前台化；派生自 NotchPeninsula `appactivator.cs`（Apache-2.0） |
 | 快捷动作 | `Services/QuickActions.cs` | 6 个动作；睡眠/重启/关机标记 `Destructive`，**只能长按 900ms 确认** |
 | 灵动岛（运行时） | `Ui/NativeIslandApp.cs` | 形变 / 命中 / 媒体 / alert / 六页面板 / 通知条 / 组合模式 / 卡拉OK，全自绘 |
-| 配色 | `Ui/IslandPalette.cs` | 深/浅两套（纯黑 `#000000` / 暖白 `#f5f6f8`）+ `theme=system` 跟随系统 + 背景不透明度 + WCAG 对比度自检；所有绘制统一取色 |
+| 配色 | `Ui/IslandPalette.cs` | 深/浅/液态玻璃三套（纯黑 `#000000` / 暖白 `#f5f6f8` / 浅色半透明材质）+ `theme=system` 跟随系统 + 背景透明度（只压背景类 alpha）+ `Over` 合成后 WCAG 对比度自检；所有绘制统一取色 |
 
 > `IslandWindow.xaml(.cs)`、`Ui/ExpandedPages.cs`、`Ui/QuickFan.cs` 是早期 WPF 版实现，
 > **保留作对照/后续 UI 扩展，当前不参与运行**（`QuickFan` 的悬停扇出模型已被「快捷」页取代）。
@@ -41,10 +41,15 @@
   睡眠 / 重启 / 关机带红环预警，**必须按住 0.9 秒**（红色进度弧走满）且松手时指针仍在按钮上才触发，
   长按中指针滑出按钮即取消。资源管理器 / 设置 / 任务管理器三个动作已被移除。
 
+外观契约：主题四选一（深 / 浅 / 跟随系统 / **液态玻璃**），液态玻璃恒浅色、走应用内半透明材质
+（不是桌面级 Acrylic——岛是 `UpdateLayeredWindow` 分层窗，拿不到桌面像素）；背景透明度 40–100% 只压
+背景类 alpha（主体/卡片/轨道/阴影/边框/高光），文字与强调色不变，滑杆旁另给三档预设。
+
 这套契约由 `lingyun.exe --self-test` 断言守护（危险动作单击不执行、按不够时长不执行、
 长按中移开不执行、快捷页顶行不含危险动作、频谱 80Hz 正弦 → band0 主导、多来源选源回落顺序、
 B站站标 Always 策略、通知宽度/抢占规则、组合模式槽位与自动长度、卡拉OK进度与延迟补偿、
-性能采样、性能页网速开关、主题解析与不透明度、自动隐藏谓词等，共 136 条）。
+性能采样、性能页网速开关、主题解析与不透明度、液态玻璃恒浅色与材质 alpha 单调、透明底离屏 alpha、
+自动隐藏谓词等，共 152 条）。
 
 ## 构建 / 运行
 
@@ -68,9 +73,9 @@ Copy-Item -Force publish\lingyun.exe ..\..\lingyun.exe
 ## 诊断
 
 ```powershell
-lingyun.exe --self-test          # 136 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局、通知宽度/抢占、性能页网速、主题与不透明度、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
+lingyun.exe --self-test          # 152 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
 lingyun.exe --self-test --diag-quick   # 自测 + 快捷页契约报告（写 灵云-diag.txt）
-lingyun.exe --dump-frames        # 离屏渲染各状态帧（写 灵云-diag/*.png）
+lingyun.exe --dump-frames        # 离屏渲染各状态帧（写 灵云-diag/*.png）；含 -glass 液态玻璃帧
 lingyun.exe --spectrum-probe 5   # 音频链路自检：频谱捕获峰值 + SMTC 会话状态 + 音量设备 + 天气定位来源
 lingyun.exe --marquee-probe      # 跑马灯运动验证（两次渲染比较标题带重心）
 lingyun.exe --toast-probe        # 通知权限 / 高水位 Id / 当前通知（AUMID、标题）
@@ -79,7 +84,7 @@ lingyun.exe --exit               # 请正在运行的实例退出（岛上弹确
 lingyun.exe --demo               # 约 6 秒走完 alert 并退出
 ```
 
-读诊断帧的两个坑：
+读诊断帧的几个坑：
 
 1. **文件名带 `-forced` 的帧是「诊断强制状态」**：它们显式调了 `ForceQuickPress(...)`
    把「快捷」页摆成长按中的样子，只用来看交互外观和安全保护，**不代表日常外观**。
@@ -90,6 +95,9 @@ lingyun.exe --demo               # 约 6 秒走完 alert 并退出
 3. 组合模式帧有独立实例（`appComp` / `appCompStatic` / `appCompBig`），其模块内容随
    `compact_scale` 一起缩放（`DrawCompactComposite` 里用 `CompactContentScale`）；
    改缩放逻辑时务必确认岛体右侧没有留空白——像素探针看「岛右缘 − 内容最右」应为 0。
+4. `-glass` 帧属于独立实例（`appGlass` / `appGlass40` / `appGlassB` / `appGlassC`），主题为
+   `liquid-glass`。它们是**给人眼看的观感图**，底被刷成中灰；真正判「岛外透明、40% 比 100% 更透」
+   的是 `--self-test` 里的透明底像素断言（`Clear(SKColors.Transparent)` 后读 alpha）。
 
 ## 真机验证：`tools/hover_probe.py`
 

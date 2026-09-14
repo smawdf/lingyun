@@ -1463,6 +1463,39 @@ public sealed class NativeIslandApp : IDisposable
 
     private void RenderFrame() => _host.Render(PaintScene);
 
+    private static SKColor Fade(SKColor color, float factor)
+        => color.WithAlpha((byte)Math.Clamp(Math.Round(color.Alpha * Math.Clamp(factor, 0f, 1f)), 0, 255));
+
+    private float OpacityFactor
+        => Math.Clamp(_cfg.Opacity, 40, 100) / 100f;
+
+    private SKColor BackgroundAlpha(SKColor color, byte alpha)
+        => color.WithAlpha((byte)Math.Clamp(Math.Round(alpha * OpacityFactor), 0, 255));
+
+    /// <summary>统一绘制卡片/面板表面：填充、细边框、顶部内高光。</summary>
+    private void DrawMaterialSurface(SKCanvas canvas, SKRect r, float radius, SKColor fill)
+    {
+        using (var bg = new SKPaint { Color = fill, IsAntialias = true })
+            canvas.DrawRoundRect(r, radius, radius, bg);
+        using (var bd = new SKPaint
+        {
+            Color = Pal.Border,
+            IsAntialias = true,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1,
+        })
+            canvas.DrawRoundRect(r, radius, radius, bd);
+        using (var hi = new SKPaint { Color = Pal.Highlight, IsAntialias = true })
+            canvas.DrawRoundRect(
+                new SKRect(r.Left + radius * 0.4f, r.Top + 1, r.Right - radius * 0.4f, r.Top + 2.2f),
+                1.1f,
+                1.1f,
+                hi);
+    }
+
+    private void DrawMaterialCard(SKCanvas canvas, SKRect r, float radius)
+        => DrawMaterialSurface(canvas, r, radius, Pal.Card);
+
     /// <summary>
     /// 把当前状态画到任意 canvas 上。与窗口无关，因此可被离屏渲染（诊断出图 / 自测）复用。
     /// </summary>
@@ -1475,18 +1508,16 @@ public sealed class NativeIslandApp : IDisposable
         var rect = new SKRect(x * s, y * s, (x + w) * s, (y + h) * s);
         float radius = (float)Math.Min(_islandH / 2, MaxRadius) * s;
 
-        // 岛投影对齐原型 box-shadow: 0 30px 80px rgba(0,0,0,.65)——大柔影、向下偏移；
-        // 之前 blur 只有 10，浅色壁纸上会显出一圈生硬的边
+        // 岛投影使用调色板 alpha，透明度滑杆也会同步压低阴影。
         using (var shadow = new SKPaint
         {
-            Color = Pal.Dark ? new SKColor(0, 0, 0, 150) : new SKColor(20, 30, 50, 130),
+            Color = Pal.Shadow,
             IsAntialias = true,
             MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 26 * s),
         })
             canvas.DrawRoundRect(rect.Left, rect.Top + 14 * s, rect.Width, rect.Height, radius, radius, shadow);
 
-        using (var body = new SKPaint { Color = Pal.Body, IsAntialias = true })
-            canvas.DrawRoundRect(rect, radius, radius, body);
+        DrawMaterialSurface(canvas, rect, radius, Pal.Body);
 
         if (_mode == "compact")
             DrawCompact(canvas, rect, s);
@@ -1497,6 +1528,7 @@ public sealed class NativeIslandApp : IDisposable
         else if (_mode == "confirm")
             DrawConfirm(canvas, rect, s);
     }
+
 
     // ---- 供诊断使用的状态读写（不改变正常运行行为）----
 
@@ -1597,7 +1629,7 @@ public sealed class NativeIslandApp : IDisposable
             if (tiltDeg != 0f) canvas.RotateDegrees(tiltDeg, art.MidX, art.MidY);
             using var sh = new SKPaint
             {
-                Color = new SKColor(0, 0, 0, Pal.Dark ? (byte)125 : (byte)60),
+                Color = Fade(Pal.Shadow, Pal.Dark ? 0.8f : 0.45f),
                 IsAntialias = true,
                 MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 12 * scale),
             };
@@ -1934,11 +1966,11 @@ public sealed class NativeIslandApp : IDisposable
         float tw = MeasureText(text, size);
         float cy = r.Bottom + 21 * s;
         var box = new SKRect(r.MidX - tw / 2 - 12 * s, cy - 14 * s, r.MidX + tw / 2 + 12 * s, cy + 14 * s);
-        using (var bg = new SKPaint { Color = Pal.Body.WithAlpha(240), IsAntialias = true })
+        using (var bg = new SKPaint { Color = Fade(Pal.Body, 0.94f), IsAntialias = true })
             canvas.DrawRoundRect(box, 14 * s, 14 * s, bg);
         using (var edge = new SKPaint
                {
-                   Color = Pal.Danger.WithAlpha(170),
+                   Color = BackgroundAlpha(Pal.Danger, 170),
                    IsAntialias = true,
                    Style = SKPaintStyle.Stroke,
                    StrokeWidth = 1,
@@ -1957,8 +1989,7 @@ public sealed class NativeIslandApp : IDisposable
         // 应用图标块（圆角方 + 底色），比裸图标更贴近设计提案
         var block = new SKRect(r.Left + 14 * s, r.Top + 11 * s, r.Left + 44 * s, r.Top + 41 * s);
         string key = t.Aumid.Length > 0 ? t.Aumid : t.App;
-        using (var blockBg = new SKPaint { Color = Pal.Card, IsAntialias = true })
-            canvas.DrawRoundRect(block, 8 * s, 8 * s, blockBg);
+        DrawMaterialSurface(canvas, block, 8 * s, Pal.Card);
         var icon = new SKRect(block.Left + 5 * s, block.Top + 5 * s, block.Right - 5 * s, block.Bottom - 5 * s);
         var bmp = IconBitmap(key);
         if (bmp is not null) canvas.DrawBitmap(bmp, icon);
@@ -2171,7 +2202,7 @@ public sealed class NativeIslandApp : IDisposable
     {
         bool dark = Pal.Dark;
         var bmp = CoverBitmap() ?? IconBitmap(_media.State.AppId);
-        string key = $"{(bmp is null ? "none" : bmp.GetHashCode())}|{dark}|{s:0.00}|{(int)r.Width}x{(int)r.Height}";
+        string key = $"{(bmp is null ? "none" : bmp.GetHashCode())}|{_cfg.Theme}|{_cfg.Opacity}|{s:0.00}|{(int)r.Width}x{(int)r.Height}";
         if (_blurImg is null || key != _blurKey)
         {
             _blurKey = key;
@@ -2180,11 +2211,11 @@ public sealed class NativeIslandApp : IDisposable
             try
             {
                 int w = Math.Max(1, (int)r.Width), h = Math.Max(1, (int)r.Height);
-                using var surf = SKSurface.Create(new SKImageInfo(w, h));
+                using var surf = SKSurface.Create(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
                 if (surf is not null)
                 {
                     var c = surf.Canvas;
-                    c.Clear(dark ? new SKColor(14, 14, 18) : new SKColor(238, 240, 245));
+                    c.Clear(SKColors.Transparent);
                     if (bmp is not null)
                     {
                         // 放大 1.15 倍铺满再模糊：避免边缘模糊采样到透明区发暗
@@ -2201,7 +2232,12 @@ public sealed class NativeIslandApp : IDisposable
                         c.DrawBitmap(bmp, dest, bp);
                     }
                     // 遮罩压住模糊层，保证两套主题下文字对比度（对应 HTML 原型的 veil）
-                    using (var veil = new SKPaint { Color = dark ? new SKColor(0, 0, 0, 175) : new SKColor(245, 246, 248, 205) })
+                    using (var veil = new SKPaint
+                    {
+                        Color = BackgroundAlpha(
+                            dark ? new SKColor(0, 0, 0) : new SKColor(245, 246, 248),
+                            dark ? (byte)175 : (byte)205),
+                    })
                         c.DrawRect(0, 0, w, h, veil);
                     _blurImg = surf.Snapshot();
                 }
@@ -2214,7 +2250,13 @@ public sealed class NativeIslandApp : IDisposable
         {
             clip.AddRoundRect(r, radius, radius);
             canvas.ClipPath(clip);
-            canvas.DrawImage(_blurImg, r.Left, r.Top);
+            using var imagePaint = new SKPaint
+            {
+                Color = new SKColor(255, 255, 255, (byte)Math.Round(255 * OpacityFactor)),
+                IsAntialias = true,
+                FilterQuality = SKFilterQuality.High,
+            };
+            canvas.DrawImage(_blurImg, r.Left, r.Top, imagePaint);
         }
         canvas.Restore();
     }
@@ -2229,7 +2271,13 @@ public sealed class NativeIslandApp : IDisposable
         {
             clip.AddRoundRect(r, radius, radius);
             canvas.ClipPath(clip);
-            using (var baseFill = new SKPaint { Color = dark ? new SKColor(0x0a, 0x0a, 0x0c) : new SKColor(0xfb, 0xfb, 0xfd), IsAntialias = true })
+            using (var baseFill = new SKPaint
+            {
+                Color = BackgroundAlpha(
+                    dark ? new SKColor(0x0a, 0x0a, 0x0c) : new SKColor(0xfb, 0xfb, 0xfd),
+                    255),
+                IsAntialias = true,
+            })
                 canvas.DrawRect(r, baseFill);
             DrawGlow(canvas, new SKPoint(r.Right - 90 * s, r.Top + 60 * s), 250 * s, _vibA, dark ? (byte)185 : (byte)120);
             DrawGlow(canvas, new SKPoint(r.Left + 50 * s, r.Bottom - 10 * s), 200 * s, _vibB, dark ? (byte)140 : (byte)90);
@@ -2241,11 +2289,11 @@ public sealed class NativeIslandApp : IDisposable
     /// 柔光光斑：模糊实心圆（不用径向渐变——同一个 painter 上 SKShader.CreateRadialGradient
     /// 配 DrawCircle 实测画不出东西，而 MaskFilter 模糊在本工程的岛屿投影/圆环辉光上都验证有效）。
     /// </summary>
-    private static void DrawGlow(SKCanvas canvas, SKPoint center, float radius, SKColor color, byte alpha)
+    private void DrawGlow(SKCanvas canvas, SKPoint center, float radius, SKColor color, byte alpha)
     {
         using var paint = new SKPaint
         {
-            Color = color.WithAlpha(alpha),
+            Color = BackgroundAlpha(color, alpha),
             IsAntialias = true,
             MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, radius * 0.42f),
         };
@@ -2417,7 +2465,12 @@ public sealed class NativeIslandApp : IDisposable
         if (_hover)
         {
             float dx = track.Left + fillW;
-            using (var sh = new SKPaint { Color = new SKColor(0, 0, 0, 110), IsAntialias = true, MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 3 * s) })
+            using (var sh = new SKPaint
+            {
+                Color = Fade(Pal.Shadow, 0.85f),
+                IsAntialias = true,
+                MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 3 * s),
+            })
                 canvas.DrawCircle(dx, ty, 7 * s, sh);
             using var dp = new SKPaint { Color = SKColors.White, IsAntialias = true };
             canvas.DrawCircle(dx, ty, 5.5f * s, dp);
@@ -2441,16 +2494,18 @@ public sealed class NativeIslandApp : IDisposable
         var st = _media.State;
         if (!ch.BgBar.IsEmpty)
         {
-            // B 沉浸：玻璃控制条（半透明底 + 1px 描边，对应 HTML 原型的 backdrop blur 观感）
-            using (var barBg = new SKPaint { Color = dark ? new SKColor(255, 255, 255, 30) : new SKColor(255, 255, 255, 150), IsAntialias = true })
-                canvas.DrawRoundRect(ch.BgBar, 17 * s, 17 * s, barBg);
-            using (var barBd = new SKPaint { Color = dark ? new SKColor(255, 255, 255, 42) : new SKColor(0, 0, 0, 22), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1 })
-                canvas.DrawRoundRect(ch.BgBar, 17 * s, 17 * s, barBd);
+            // B 沉浸：玻璃控制条（与公共材质同源，透明度可实时调节）
+            DrawMaterialSurface(canvas, ch.BgBar, 17 * s, Pal.Card);
         }
         DrawSkipGlyph(canvas, ch.Prev.MidX, ch.Prev.MidY, 15 * s, next: false, Pal.Fg);
         DrawSkipGlyph(canvas, ch.Next.MidX, ch.Next.MidY, 15 * s, next: true, Pal.Fg);
         // 主播放钮：圆形底 + 柔和投影（深色白底黑标 / 浅色墨底白标）
-        using (var sh = new SKPaint { Color = new SKColor(0, 0, 0, dark ? (byte)120 : (byte)70), IsAntialias = true, MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 8 * s) })
+        using (var sh = new SKPaint
+        {
+            Color = Fade(Pal.Shadow, 0.85f),
+            IsAntialias = true,
+            MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 8 * s),
+        })
             canvas.DrawCircle(ch.Play.MidX, ch.Play.MidY, ch.PlayRadius, sh);
         using (var cp = new SKPaint { Color = dark ? SKColors.White : new SKColor(0x18, 0x18, 0x1a), IsAntialias = true })
             canvas.DrawCircle(ch.Play.MidX, ch.Play.MidY, ch.PlayRadius, cp);
@@ -2513,8 +2568,7 @@ public sealed class NativeIslandApp : IDisposable
     private void DrawHomeChip(SKCanvas canvas, MediaChrome ch, float s)
     {
         var box = ch.Home;
-        using (var bg = new SKPaint { Color = Pal.Card, IsAntialias = true })
-            canvas.DrawRoundRect(box, box.Height / 2, box.Height / 2, bg);
+        DrawMaterialSurface(canvas, box, box.Height / 2, Pal.Card);
         float cx = box.Left + 15 * s, cy = box.MidY, u = 5 * s;
         using var hp = new SKPaint
         {
@@ -2574,8 +2628,7 @@ public sealed class NativeIslandApp : IDisposable
     {
         var box = ch.SrcChip;
         if (box.IsEmpty) return;
-        using (var bg = new SKPaint { Color = Pal.Card, IsAntialias = true })
-            canvas.DrawRoundRect(box, box.Height / 2, box.Height / 2, bg);
+        DrawMaterialSurface(canvas, box, box.Height / 2, Pal.Card);
         var list = _media.Sessions;
         var cur = list[Math.Clamp(_media.SelectedIndex, 0, list.Count - 1)];
         var (dotA, dotB) = SourceDotColors(cur.AppId);
@@ -2639,7 +2692,7 @@ public sealed class NativeIslandApp : IDisposable
             var ac = PageAccent(i);
             if (on)
             {
-                using var bg = new SKPaint { Color = ac.WithAlpha(33), IsAntialias = true };
+                using var bg = new SKPaint { Color = BackgroundAlpha(ac, 33), IsAntialias = true };
                 canvas.DrawRoundRect(new SKRect(tx, pillTop, tx + tw, pillTop + pillH), 8 * s, 8 * s, bg);
             }
             var ic = on ? ac : Pal.Dim;
@@ -2655,7 +2708,7 @@ public sealed class NativeIslandApp : IDisposable
             IsAntialias = true,
             Shader = SKShader.CreateLinearGradient(
                 new SKPoint(r.Left + PagePadX * s, 0), new SKPoint(r.Right - 40 * s, 0),
-                new[] { lineAc.WithAlpha(110), lineAc.WithAlpha(0) },
+                new[] { BackgroundAlpha(lineAc, 110), BackgroundAlpha(lineAc, 0) },
                 new float[] { 0f, 1f }, SKShaderTileMode.Clamp),
         })
             // DrawRect 的 4-float 重载是 (x, y, W, H)——之前把右下角坐标当宽高传，
@@ -2895,10 +2948,10 @@ public sealed class NativeIslandApp : IDisposable
                 letter = cu.Name.Length > 0 ? cu.Name[..1].ToUpperInvariant() : "A";
             }
 
-            using (var bg = new SKPaint { Color = pressing ? Pal.Danger.WithAlpha(90) : Pal.Card, IsAntialias = true })
+            using (var bg = new SKPaint { Color = pressing ? BackgroundAlpha(Pal.Danger, 90) : Pal.Card, IsAntialias = true })
                 canvas.DrawRoundRect(cell, 14 * s, 14 * s, bg);
             // 顶部 1px 内高光（玻璃质感）
-            using (var hi = new SKPaint { Color = Pal.Dark ? new SKColor(255, 255, 255, 14) : new SKColor(255, 255, 255, 130), IsAntialias = true })
+            using (var hi = new SKPaint { Color = Pal.Highlight, IsAntialias = true })
                 canvas.DrawRoundRect(cell.Left + 2 * s, cell.Top + 1.5f * s, cell.Width - 4 * s, 2 * s, 2 * s, 2 * s, hi);
 
             // 圆钮/标签按卡高比例定位（不是固定偏移）：卡被压扁时内容仍在卡内
@@ -2910,7 +2963,7 @@ public sealed class NativeIslandApp : IDisposable
                 // 虚线框 + 加号
                 using (var dash = new SKPaint
                 {
-                    Color = Pal.Dim.WithAlpha(160), IsAntialias = true,
+                    Color = BackgroundAlpha(Pal.Dim, 160), IsAntialias = true,
                     Style = SKPaintStyle.Stroke, StrokeWidth = 1.2f * s,
                     PathEffect = SKPathEffect.CreateDash(new float[] { 4 * s, 3 * s }, 0),
                 })
@@ -2927,13 +2980,18 @@ public sealed class NativeIslandApp : IDisposable
                 {
                     using var warn = new SKPaint
                     {
-                        Color = ball.WithAlpha(120), IsAntialias = true,
+                        Color = BackgroundAlpha(ball, 120), IsAntialias = true,
                         Style = SKPaintStyle.Stroke, StrokeWidth = 1.3f * s,
                     };
                     canvas.DrawRoundRect(cell, 14 * s, 14 * s, warn);
                 }
                 // 圆钮 + 柔光
-                using (var glow = new SKPaint { Color = ball.WithAlpha(70), IsAntialias = true, MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 6 * s) })
+                using (var glow = new SKPaint
+                {
+                    Color = Fade(Pal.Shadow, 0.8f),
+                    IsAntialias = true,
+                    MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 6 * s),
+                })
                     canvas.DrawCircle(bcx, bcy, ballR, glow);
                 using (var fill = new SKPaint { Color = ball, IsAntialias = true })
                     canvas.DrawCircle(bcx, bcy, ballR, fill);
@@ -2950,7 +3008,7 @@ public sealed class NativeIslandApp : IDisposable
                     float frac = (float)Math.Clamp(held / QuickActions.HoldMs, 0, 1);
                     using var arc = new SKPaint
                     {
-                        Color = new SKColor(0xff, 0x4d, 0x4d),
+                        Color = BackgroundAlpha(new SKColor(0xff, 0x4d, 0x4d), 255),
                         IsAntialias = true,
                         Style = SKPaintStyle.Stroke,
                         StrokeWidth = 2.5f * s,
@@ -3105,7 +3163,7 @@ public sealed class NativeIslandApp : IDisposable
             bool sel = _cfg.Action == PlanActionKeys[i];
             using (var segBg = new SKPaint
             {
-                Color = sel ? ac.WithAlpha(Pal.Dark ? (byte)48 : (byte)32) : Pal.Track,
+                Color = sel ? BackgroundAlpha(ac, Pal.Dark ? (byte)48 : (byte)32) : Pal.Track,
                 IsAntialias = true,
             })
                 canvas.DrawRoundRect(seg, 7 * s, 7 * s, segBg);
@@ -3130,12 +3188,12 @@ public sealed class NativeIslandApp : IDisposable
             bool sel = _cfg.Weekdays.Contains(i + 1);
             using (var wbg = new SKPaint
             {
-                Color = sel ? ac.WithAlpha(Pal.Dark ? (byte)44 : (byte)28) : Pal.Card,
+                Color = sel ? BackgroundAlpha(ac, Pal.Dark ? (byte)44 : (byte)28) : Pal.Card,
                 IsAntialias = true,
             })
                 canvas.DrawRoundRect(wd, 8 * s, 8 * s, wbg);
             if (sel)
-                using (var wbd = new SKPaint { Color = ac.WithAlpha(150), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1 * s })
+                using (var wbd = new SKPaint { Color = BackgroundAlpha(ac, 150), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1 * s })
                     canvas.DrawRoundRect(wd, 8 * s, 8 * s, wbd);
             DrawText(canvas, WdNames[i],
                 wd.MidX - MeasureText(WdNames[i], 11 * s, SKFontStyleWeight.SemiBold) / 2,
@@ -3156,11 +3214,11 @@ public sealed class NativeIslandApp : IDisposable
             IsAntialias = true,
             Shader = SKShader.CreateLinearGradient(
                 new SKPoint(pl.Banner.Left, 0), new SKPoint(pl.Banner.Right, 0),
-                new[] { ac.WithAlpha(Pal.Dark ? (byte)52 : (byte)30), ac.WithAlpha(0) },
+                new[] { BackgroundAlpha(ac, Pal.Dark ? (byte)52 : (byte)30), BackgroundAlpha(ac, 0) },
                 new float[] { 0f, 0.78f }, SKShaderTileMode.Clamp),
         })
             canvas.DrawRoundRect(pl.Banner, 11 * s, 11 * s, bb);
-        using (var bbd = new SKPaint { Color = ac.WithAlpha(Pal.Dark ? (byte)80 : (byte)60), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1 * s })
+        using (var bbd = new SKPaint { Color = BackgroundAlpha(ac, Pal.Dark ? (byte)80 : (byte)60), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1 * s })
             canvas.DrawRoundRect(pl.Banner, 11 * s, 11 * s, bbd);
         using (var zap = new SKPaint { Color = ac, IsAntialias = true })
         {
@@ -3203,23 +3261,7 @@ public sealed class NativeIslandApp : IDisposable
     /// 渐变着色器的 alpha 放大问题（实测 ×3.8），这里不画染层。
     /// </summary>
     private void DrawCard(SKCanvas canvas, SKRect r, float radius)
-    {
-        using (var bg = new SKPaint { Color = Pal.Card, IsAntialias = true })
-            canvas.DrawRoundRect(r, radius, radius, bg);
-        using (var bd = new SKPaint
-        {
-            Color = Pal.Dark ? new SKColor(255, 255, 255, 26) : new SKColor(0, 0, 0, 23),
-            IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1,
-        })
-            canvas.DrawRoundRect(r, radius, radius, bd);
-        using (var hi = new SKPaint
-        {
-            Color = Pal.Dark ? new SKColor(255, 255, 255, 14) : new SKColor(255, 255, 255, 170),
-            IsAntialias = true,
-        })
-            canvas.DrawRoundRect(new SKRect(r.Left + radius * 0.4f, r.Top + 1, r.Right - radius * 0.4f, r.Top + 2.2f),
-                1.1f, 1.1f, hi);
-    }
+        => DrawMaterialCard(canvas, r, radius);
 
     private void DrawPagePerf(SKCanvas canvas, SKRect b, float s)
     {
@@ -3317,7 +3359,7 @@ public sealed class NativeIslandApp : IDisposable
             var arcRect = new SKRect(cx - r, cy - r, cx + r, cy + r);
             using (var glow = new SKPaint
             {
-                Color = accent.WithAlpha(120), IsAntialias = true, Style = SKPaintStyle.Stroke,
+                Color = BackgroundAlpha(accent, 120), IsAntialias = true, Style = SKPaintStyle.Stroke,
                 StrokeWidth = 6 * s, StrokeCap = SKStrokeCap.Round,
                 MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 5 * s),
             })
@@ -3486,8 +3528,7 @@ public sealed class NativeIslandApp : IDisposable
         {
             var t = _cfg.Tasks[i];
             var row = cells[i];
-            using (var card = new SKPaint { Color = Pal.Card, IsAntialias = true })
-                canvas.DrawRoundRect(row, 9 * s, 9 * s, card);
+            DrawMaterialCard(canvas, row, 9 * s);
 
             // 勾选圈：点它完成 / 取消完成（HTML 实测 16×16 起 x13）
             var dc = new SKRect(row.Left + 13 * s, row.MidY - 8 * s, row.Left + 29 * s, row.MidY + 8 * s);
@@ -3535,8 +3576,8 @@ public sealed class NativeIslandApp : IDisposable
             {
                 float tx = dels[i].Left - 8 * s - timeW;
                 float cx2 = tx - catW;
-                using (var chip = new SKPaint { Color = Pal.Track, IsAntialias = true })
-                    canvas.DrawRoundRect(new SKRect(cx2, row.MidY - 7 * s, cx2 + catW, row.MidY + 7 * s), 6 * s, 6 * s, chip);
+                var chipRect = new SKRect(cx2, row.MidY - 7 * s, cx2 + catW, row.MidY + 7 * s);
+                DrawMaterialSurface(canvas, chipRect, 6 * s, Pal.Track);
                 DrawText(canvas, Ellipsize(t.Category, 9 * s, catW - 8 * s), cx2 + 7 * s, row.MidY + 3 * s, 9 * s, Pal.Sub);
                 DrawText(canvas, t.Time, tx + 4 * s, row.MidY + 4 * s, 10.5f * s, Pal.Sub);
             }
@@ -3545,8 +3586,7 @@ public sealed class NativeIslandApp : IDisposable
 
         // ＋ 新建
         bool canAdd = count < 12;
-        using (var bg = new SKPaint { Color = canAdd ? Pal.Card : Pal.Track, IsAntialias = true })
-            canvas.DrawRoundRect(add, 9 * s, 9 * s, bg);
+            DrawMaterialSurface(canvas, add, 9 * s, canAdd ? Pal.Card : Pal.Track);
         string addText = canAdd ? "＋ 新建日程" : "日程已满（12）";
         float aw = MeasureText(addText, 12.5f * s, SKFontStyleWeight.SemiBold);
         DrawText(canvas, addText, add.MidX - aw / 2, add.MidY + 5 * s, 12.5f * s,
@@ -3594,8 +3634,7 @@ public sealed class NativeIslandApp : IDisposable
             b.Top + 20 * s, 10.5f * s, Pal.Dim);
         foreach (var (btn, ch) in new[] { (cl.Prev, "‹"), (cl.Next, "›") })
         {
-            using (var bg = new SKPaint { Color = Pal.Card, IsAntialias = true })
-                canvas.DrawRoundRect(btn, 7 * s, 7 * s, bg);
+            DrawMaterialSurface(canvas, btn, 7 * s, Pal.Card);
             DrawText(canvas, ch, btn.MidX - MeasureText(ch, 12 * s) / 2, btn.MidY + 4 * s, 12 * s, Pal.Sub);
         }
         for (int i = 0; i < 7; i++)
@@ -3671,8 +3710,7 @@ public sealed class NativeIslandApp : IDisposable
         }
 
         var (cancel, quit) = ConfirmButtons(r, s);
-        using (var bg = new SKPaint { Color = Pal.Card, IsAntialias = true })
-            canvas.DrawRoundRect(cancel, 18 * s, 18 * s, bg);
+        DrawMaterialSurface(canvas, cancel, 18 * s, Pal.Card);
         DrawText(canvas, "取消", cancel.MidX - MeasureText("取消", 13 * s) / 2, cancel.MidY + 5 * s,
             13 * s, Pal.Fg, SKFontStyleWeight.SemiBold);
 
@@ -3704,7 +3742,7 @@ public sealed class NativeIslandApp : IDisposable
             IsAntialias = true,
             Shader = SKShader.CreateRadialGradient(
                 new SKPoint(r.MidX, r.Top - 30 * s), 230 * s,
-                new[] { Pal.Danger.WithAlpha(Pal.Dark ? (byte)60 : (byte)36), Pal.Danger.WithAlpha(0) },
+                new[] { BackgroundAlpha(Pal.Danger, Pal.Dark ? (byte)60 : (byte)36), BackgroundAlpha(Pal.Danger, 0) },
                 new float[] { 0f, 1f }, SKShaderTileMode.Clamp),
         })
             canvas.DrawRect(r, amb);
@@ -3713,14 +3751,14 @@ public sealed class NativeIslandApp : IDisposable
         float bw = MeasureText(badge, 13 * s, SKFontStyleWeight.SemiBold);
         float badgeX = r.MidX - (bw + 16 * s) / 2f;
         double breath = 0.55 + 0.45 * Math.Sin(DateTime.UtcNow.Ticks / 5_000_000.0);
-        using (var dot = new SKPaint { Color = Pal.Danger.WithAlpha((byte)(90 + 165 * breath)), IsAntialias = true })
+        using (var dot = new SKPaint { Color = BackgroundAlpha(Pal.Danger, (byte)(90 + 165 * breath)), IsAntialias = true })
             canvas.DrawCircle(badgeX + 4 * s, r.Top + 62 * s, 4.5f * s, dot);
         DrawText(canvas, badge, badgeX + 16 * s, r.Top + 66 * s, 13 * s, Pal.Danger, SKFontStyleWeight.SemiBold);
         // 大号等宽倒计时（最后 10 秒变红闪烁）
         string dig = left >= 3600
             ? $"{(int)left / 3600:00}:{(int)left % 3600 / 60:00}:{(int)left % 60:00}"
             : $"{(int)left / 60:00}:{(int)left % 60:00}";
-        var digColor = left <= 10 && (int)left % 2 == 1 ? Pal.Danger.WithAlpha(120)
+        var digColor = left <= 10 && (int)left % 2 == 1 ? BackgroundAlpha(Pal.Danger, 120)
             : left <= 10 ? Pal.Danger : Pal.Fg;
         DrawText(canvas, dig, r.MidX - MeasureText(dig, 42 * s, SKFontStyleWeight.Bold) / 2,
             r.Top + 122 * s, 42 * s, digColor, SKFontStyleWeight.Bold);
@@ -3728,8 +3766,7 @@ public sealed class NativeIslandApp : IDisposable
         DrawText(canvas, sub, r.MidX - MeasureText(sub, 11 * s) / 2, r.Top + 146 * s, 11 * s, Pal.Sub);
 
         var (cancel, exec) = AlertButtons(r, s);
-        using (var bg = new SKPaint { Color = Pal.Card, IsAntialias = true })
-            canvas.DrawRoundRect(cancel, 17 * s, 17 * s, bg);
+        DrawMaterialSurface(canvas, cancel, 17 * s, Pal.Card);
         DrawText(canvas, "取消本次", cancel.MidX - MeasureText("取消本次", 12.5f * s) / 2, cancel.MidY + 4.5f * s,
             12.5f * s, Pal.Fg, SKFontStyleWeight.SemiBold);
         using (var bg = new SKPaint { Color = Pal.Danger, IsAntialias = true })

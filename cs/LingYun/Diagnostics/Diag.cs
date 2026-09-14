@@ -135,8 +135,16 @@ internal static class Diag
                 var win = new Ui.SettingsWindow(smokeCfg, smokeIsland, () => { });
                 win.Show();
                 win.Close();
+                // 液态玻璃 + 40% 也走一遍：确认新主题的单选回填与透明度预设不抛
+                var glassSmoke = new AppConfig { Theme = "liquid-glass", Opacity = 40 };
+                using var glassSmokeMedia = new MediaSessionService();
+                using var glassSmokeIsland = new NativeIslandApp(glassSmoke, glassSmokeMedia);
+                var glassWin = new Ui.SettingsWindow(glassSmoke, glassSmokeIsland, () => { });
+                glassWin.Show();
+                glassWin.Close();
                 w.WriteLine("========== --settings-smoke ==========");
                 w.WriteLine("设置窗口：构造 / 显示 / 关闭 OK（含 system 主题、组合模式、60% 不透明度回填）");
+                w.WriteLine("设置窗口：液态玻璃 + 40% 不透明度构造 / 显示 / 关闭 OK");
                 w.WriteLine();
             }
             catch (Exception ex)
@@ -456,6 +464,11 @@ internal static class Diag
         w.WriteLine("#   默认外观：紧凑态永远只有时间/媒体/通知，没有任何功能按钮；");
         w.WriteLine("#   功能（含 6 个快捷动作）只在点击展开后的「快捷」页里。");
         w.WriteLine("#   要验真实交互行为，用 cs/tools/hover_probe.py，别用这些帧下结论。");
+        w.WriteLine("#");
+        w.WriteLine("# 主题说明：文件名带 -glass 的帧是「液态玻璃」——固定浅色的【应用内】半透明材质");
+        w.WriteLine("#   （浅色半透明表面 + 细边框 + 顶部内高光 + 半透明卡片），背景 alpha 随");
+        w.WriteLine("#   「背景透明度」滑杆（40–100%）变化，文字与强调色始终不透明。");
+        w.WriteLine("#   岛是 UpdateLayeredWindow 分层窗、拿不到桌面像素，所以它【不是】Win11 桌面级 Acrylic 模糊。");
         w.WriteLine();
 
         var cfg = new AppConfig
@@ -567,6 +580,26 @@ internal static class Diag
         styleCCfg = ConfigStore.Normalize(styleCCfg);
         var mediaStyleC = new MediaSessionService();
         var appStyleC = new NativeIslandApp(styleCCfg, mediaStyleC);
+
+        // 液态玻璃（新主题）：固定浅色、应用内半透明材质——不是桌面级 DWM 模糊，
+        // 岛体是 UpdateLayeredWindow 分层窗，拿不到桌面像素，所以材质全部在 Skia 里画。
+        // 三档透明度各出一帧，肉眼能直接比对"轻透 / 半透 / 不透明"。
+        var glassCfg = ConfigStore.Normalize(new AppConfig
+        { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass" });
+        var mediaGlass = new MediaSessionService();
+        var appGlass = new NativeIslandApp(glassCfg, mediaGlass);
+        var glass40Cfg = ConfigStore.Normalize(new AppConfig
+        { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass", Opacity = 40 });
+        var mediaGlass40 = new MediaSessionService();
+        var appGlass40 = new NativeIslandApp(glass40Cfg, mediaGlass40);
+        var glassBCfg = ConfigStore.Normalize(new AppConfig
+        { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass", MediaStyle = "b" });
+        var mediaGlassB = new MediaSessionService();
+        var appGlassB = new NativeIslandApp(glassBCfg, mediaGlassB);
+        var glassCCfg = ConfigStore.Normalize(new AppConfig
+        { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass", MediaStyle = "c" });
+        var mediaGlassC = new MediaSessionService();
+        var appGlassC = new NativeIslandApp(glassCCfg, mediaGlassC);
 
         // 「重启」的下标从动作表算出来，不要写死——动作表会被增删，写死会让长按帧悄悄错位。
         int restartAt = QuickActions.IndexOf("restart");
@@ -882,8 +915,7 @@ internal static class Diag
                     "[00:00.00]词：黄俊郎\n[00:10.00]一群嗜血的蚂蚁 被腐肉所吸引\n" +
                     "[01:05.00]我面无表情 看孤独的风景\n[01:20.00]失去你 爱恨开始分明\n"));
             }),
-            ("confirm-exit", () => { app.ForceExitConfirm(); }),
-            ("alert", () =>
+            ("confirm-exit", () => { app.ForceExitConfirm(); }),            ("alert", () =>
             {
                 app.ForceMode("alert");
                 app.ForceFocus("timer");
@@ -909,6 +941,55 @@ internal static class Diag
                 appPages.ForcePage(5);
                 appPages.ForceQuickPress(restartAt, QuickActions.HoldMs * 0.66);   // 正按「重启」，进度 66%
             }),
+            // ---- 液态玻璃（应用内浅色半透明材质；不是桌面级真实 Acrylic 模糊）----
+            ("compact-clock-glass", () =>
+            {
+                appGlass.ForceFocus("timer");
+                appGlass.ForceMode("compact");
+            }),
+            // 同一形态、透明度 40%：和上一帧并排看，背景类颜色明显更透、文字不变
+            ("compact-clock-glass-40", () =>
+            {
+                appGlass40.ForceFocus("timer");
+                appGlass40.ForceMode("compact");
+            }),
+            // 展开计划页：卡片/边框/顶部高光都走统一材质，验玻璃层次
+            ("expanded-plan-glass", () =>
+            {
+                appGlass.ForceMode("expanded");
+                appGlass.ForceFocus("timer");
+                appGlass.ForcePage(0);
+            }),
+            ("page-quick-glass", () =>
+            {
+                appGlass.ForceMode("expanded");
+                appGlass.ForcePage(5);
+            }),
+            // 液态玻璃 + 媒体页 B/C：验证沉浸底与氛围取色底同样受透明度控制
+            ("expanded-media-style-b-glass", () =>
+            {
+                mediaGlassB.InjectState(new MediaState
+                {
+                    Active = true, Title = "夜曲", Artist = "周杰伦", AppId = "cloudmusic.exe",
+                    Status = "Playing", PositionMs = 70_000, DurationMs = 210_000, Thumb = SynthCover(200),
+                });
+                mediaGlassB.InjectSessions(Array.Empty<SessionInfo>(), -1);
+                appGlassB.ForceFocus("media");
+                appGlassB.ForceMode("expanded");
+                appGlassB.InjectVolume(0.4f);
+            }),
+            ("expanded-media-style-c-glass", () =>
+            {
+                mediaGlassC.InjectState(new MediaState
+                {
+                    Active = true, Title = "夜曲", Artist = "周杰伦", AppId = "cloudmusic.exe",
+                    Status = "Playing", PositionMs = 70_000, DurationMs = 210_000, Thumb = SynthCover(120),
+                });
+                mediaGlassC.InjectSessions(Array.Empty<SessionInfo>(), -1);
+                appGlassC.ForceFocus("media");
+                appGlassC.ForceMode("expanded");
+                appGlassC.InjectVolume(0.4f);
+            }),
         };
         var renderers = new Dictionary<string, NativeIslandApp>
         {
@@ -928,6 +1009,9 @@ internal static class Diag
             ["page-plan"] = appPages, ["page-perf"] = appPages, ["page-weather"] = appPages,
             ["page-tasks"] = appPages, ["page-month"] = appPages,
             ["page-quick"] = appPages, ["page-quick-hold-forced"] = appPages,
+            ["compact-clock-glass"] = appGlass, ["compact-clock-glass-40"] = appGlass40,
+            ["expanded-plan-glass"] = appGlass, ["page-quick-glass"] = appGlass,
+            ["expanded-media-style-b-glass"] = appGlassB, ["expanded-media-style-c-glass"] = appGlassC,
         };
 
         var traceLines = new List<string>();
@@ -990,6 +1074,14 @@ internal static class Diag
             mediaPlain.Dispose();
             appTrans.Dispose();
             mediaTrans.Dispose();
+            appGlass.Dispose();
+            mediaGlass.Dispose();
+            appGlass40.Dispose();
+            mediaGlass40.Dispose();
+            appGlassB.Dispose();
+            mediaGlassB.Dispose();
+            appGlassC.Dispose();
+            mediaGlassC.Dispose();
         }
 
         return 0;
@@ -1831,6 +1923,52 @@ internal static class Diag
                 ConfigStore.Normalize(new AppConfig { Opacity = 5 }).Opacity == 100
                 && ConfigStore.Normalize(new AppConfig { Opacity = 70 }).Opacity == 70);
 
+            // 液态玻璃（新主题）：恒浅色的应用内材质，透明度滑杆同样作用于它
+            var glass = Ui.IslandPalette.For("liquid-glass", 100);
+            var glass70 = Ui.IslandPalette.For("liquid-glass", 70);
+            var glass40 = Ui.IslandPalette.For("liquid-glass", 40);
+            Check("液态玻璃：Normalize 保留 liquid-glass、乱值仍回退 dark",
+                ConfigStore.Normalize(new AppConfig { Theme = "liquid-glass" }).Theme == "liquid-glass"
+                && ConfigStore.Normalize(new AppConfig { Theme = "purple" }).Theme == "dark");
+            Check("液态玻璃：始终浅色，材质标记只给它",
+                Ui.IslandPalette.IsLiquidGlass("liquid-glass")
+                && Ui.IslandPalette.ResolveLight("liquid-glass", false)
+                && glass.LiquidGlass && !glass.Dark
+                && !Ui.IslandPalette.DarkTheme.LiquidGlass && !Ui.IslandPalette.LightTheme.LiquidGlass);
+            Check("液态玻璃：主体本身半透明（100% 也不是全不透明）",
+                glass.Body.Alpha is > 0 and < 255, glass.Body.Alpha.ToString());
+            Check("液态玻璃：40/70/100 背景类 alpha 单调递增",
+                glass40.Body.Alpha < glass70.Body.Alpha && glass70.Body.Alpha < glass.Body.Alpha
+                && glass40.Card.Alpha < glass70.Card.Alpha && glass70.Card.Alpha < glass.Card.Alpha
+                && glass40.Border.Alpha < glass70.Border.Alpha && glass70.Border.Alpha < glass.Border.Alpha
+                && glass40.Highlight.Alpha < glass.Highlight.Alpha
+                && glass40.Shadow.Alpha < glass70.Shadow.Alpha && glass70.Shadow.Alpha < glass.Shadow.Alpha,
+                $"body {glass40.Body.Alpha}/{glass70.Body.Alpha}/{glass.Body.Alpha}");
+            Check("液态玻璃：文字/强调/状态色不随透明度变淡",
+                glass40.Fg.Alpha == 255 && glass40.Sub.Alpha == 255 && glass40.Dim.Alpha == 255
+                && glass40.Accent.Alpha == 255 && glass40.Ok.Alpha == 255
+                && glass40.Danger.Alpha == 255 && glass40.Warn.Alpha == 255);
+            double glassContrastLight = Ui.IslandPalette.Contrast(
+                glass.Fg, Ui.IslandPalette.Over(glass.Body, SKColors.White));
+            double glassContrastDark = Ui.IslandPalette.Contrast(
+                glass.Fg, Ui.IslandPalette.Over(glass.Body, new SKColor(0x50, 0x50, 0x58)));
+            Check("液态玻璃：压在浅桌面/深桌面上文字都达 AAA",
+                glassContrastLight >= 7 && glassContrastDark >= 7,
+                $"浅底 {glassContrastLight:0.0} / 深底 {glassContrastDark:0.0}");
+            string glassPath = Path.Combine(Path.GetTempPath(), "lingyun-glass-" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                ConfigStore.Save(new AppConfig { Theme = "liquid-glass", Opacity = 70 }, glassPath);
+                var backGlass = ConfigStore.Load(glassPath);
+                Check("液态玻璃：主题 + 透明度落盘读回不丢",
+                    backGlass.Theme == "liquid-glass" && backGlass.Opacity == 70,
+                    $"读回 theme={backGlass.Theme} opacity={backGlass.Opacity}");
+            }
+            finally
+            {
+                try { File.Delete(glassPath); } catch { /* ignore */ }
+            }
+
             Check("自动隐藏：默认关闭时永不隐藏",
                 !NativeIslandApp.ShouldAutoHide(false, true, false, false, false, 999, 10));
             Check("自动隐藏：有媒体 / 有弹层 / 鼠标在岛上 / 未超时 都不隐藏",
@@ -1846,6 +1984,137 @@ internal static class Diag
                 NativeIslandApp.CursorInTopZone(0, 0, 4) && NativeIslandApp.CursorInTopZone(4, 0, 4)
                 && !NativeIslandApp.CursorInTopZone(5, 0, 4)
                 && NativeIslandApp.CursorInTopZone(1000, 1000, 4));
+        }
+
+        // 透明底离屏渲染：读真实像素 alpha。
+        // --dump-frames 为了看图方便把底刷成中灰，那个帧证明不了"岛外真的透明"；
+        // 这里一律 Clear(SKColors.Transparent) 后按 Bgra8888/Premul 取样，和分层窗口的 DIB 同一套约定。
+        {
+            static SKBitmap RenderTransparent(NativeIslandApp target)
+            {
+                var info = new SKImageInfo(
+                    NativeIslandApp.ShellWidth, NativeIslandApp.ShellHeight,
+                    SKColorType.Bgra8888, SKAlphaType.Premul);
+                var bmp = new SKBitmap(info);
+                using var surface = SKSurface.Create(info, bmp.GetPixels(), bmp.RowBytes);
+                if (surface is null) return bmp;
+                surface.Canvas.Clear(SKColors.Transparent);
+                target.PaintScene(surface.Canvas, info);
+                surface.Flush();
+                return bmp;
+            }
+
+            static int AlphaAt(SKBitmap b, int x, int y) => b.GetPixel(x, y).Alpha;
+
+            // 文字像素：不透明且偏暗。用于确认"压背景透明度不会把字也压淡"
+            static int CountDarkInk(SKBitmap b, int x0, int y0, int x1, int y1)
+            {
+                int n = 0;
+                for (int y = y0; y < y1; y++)
+                    for (int x = x0; x < x1; x++)
+                    {
+                        var c = b.GetPixel(x, y);
+                        if (c.Alpha < 200) continue;
+                        if ((c.Red * 299 + c.Green * 587 + c.Blue * 114) / 1000 < 100) n++;
+                    }
+                return n;
+            }
+
+            static int Differing(SKBitmap a, SKBitmap b)
+            {
+                int n = 0;
+                for (int y = 0; y < a.Height; y++)
+                    for (int x = 0; x < a.Width; x++)
+                        if (a.GetPixel(x, y) != b.GetPixel(x, y)) n++;
+                return n;
+            }
+
+            void SetupMedia(MediaSessionService m, float hue)
+            {
+                m.InjectState(new MediaState
+                {
+                    Active = true, Title = "夜曲", Artist = "周杰伦", AppId = "cloudmusic.exe",
+                    Status = "Playing", PositionMs = 70_000, DurationMs = 210_000, Thumb = SynthCover(hue),
+                });
+                m.InjectSessions(Array.Empty<SessionInfo>(), -1);
+            }
+
+            using var gm1 = new MediaSessionService();
+            using var gm2 = new MediaSessionService();
+            using var gm3 = new MediaSessionService();
+            using var gm4 = new MediaSessionService();
+            using var gm5 = new MediaSessionService();
+            using var gm6 = new MediaSessionService();
+            using var gm7 = new MediaSessionService();
+            using var gm8 = new MediaSessionService();
+            var gApp = new NativeIslandApp(new AppConfig { Theme = "liquid-glass" }, gm1);
+            var gApp40 = new NativeIslandApp(new AppConfig { Theme = "liquid-glass", Opacity = 40 }, gm2);
+            var dkApp = new NativeIslandApp(new AppConfig { Theme = "dark" }, gm3);
+            var ltApp = new NativeIslandApp(new AppConfig { Theme = "light" }, gm4);
+            var bApp = new NativeIslandApp(new AppConfig { Theme = "liquid-glass", MediaStyle = "b" }, gm5);
+            var bApp40 = new NativeIslandApp(new AppConfig { Theme = "liquid-glass", MediaStyle = "b", Opacity = 40 }, gm6);
+            var cApp = new NativeIslandApp(new AppConfig { Theme = "liquid-glass", MediaStyle = "c" }, gm7);
+            var cApp40 = new NativeIslandApp(new AppConfig { Theme = "liquid-glass", MediaStyle = "c", Opacity = 40 }, gm8);
+            foreach (var a in new[] { gApp, gApp40, dkApp, ltApp })
+            {
+                a.ForceFocus("timer");
+                a.ForceMode("compact");
+            }
+            SetupMedia(gm5, 200);
+            SetupMedia(gm6, 200);
+            SetupMedia(gm7, 120);
+            SetupMedia(gm8, 120);
+            foreach (var a in new[] { bApp, bApp40, cApp, cApp40 })
+            {
+                a.ForceFocus("media");
+                a.ForceMode("expanded");
+            }
+
+            using var fGlass = RenderTransparent(gApp);
+            using var fGlass40 = RenderTransparent(gApp40);
+            using var fDark = RenderTransparent(dkApp);
+            using var fLight = RenderTransparent(ltApp);
+            using var fB = RenderTransparent(bApp);
+            using var fB40 = RenderTransparent(bApp40);
+            using var fC = RenderTransparent(cApp);
+            using var fC40 = RenderTransparent(cApp40);
+
+            int cornerA = AlphaAt(fGlass40, 1, 1);
+            int cornerB = AlphaAt(fGlass40, NativeIslandApp.ShellWidth - 2, 1);
+            int cornerC = AlphaAt(fGlass40, 1, NativeIslandApp.ShellHeight - 2);
+            Check("离屏 alpha：壳三角 alpha 全为 0（圆角外真透明）",
+                cornerA == 0 && cornerB == 0 && cornerC == 0, $"{cornerA}/{cornerB}/{cornerC}");
+
+            int glassBody = AlphaAt(fGlass, 215, 26);
+            int glassBody40 = AlphaAt(fGlass40, 215, 26);
+            Check("离屏 alpha：液态玻璃 100% 主体半透明（不是全不透明）",
+                glassBody is > 120 and < 255, glassBody.ToString());
+            Check("离屏 alpha：不透明度 40% 确实比 100% 更透",
+                glassBody40 > 0 && glassBody40 < glassBody, $"100%={glassBody} 40%={glassBody40}");
+            int darkBody = AlphaAt(fDark, 215, 26);
+            Check("离屏 alpha：深色/浅色主题 100% 主体不透明",
+                darkBody == 255 && AlphaAt(fLight, 215, 26) == 255, darkBody.ToString());
+
+            int ink100 = CountDarkInk(fGlass, 258, 8, 400, 44);
+            int ink40 = CountDarkInk(fGlass40, 258, 8, 400, 44);
+            Check("离屏 alpha：40% 时时间文字仍清晰（只压背景不压字）",
+                ink100 > 40 && ink40 >= ink100 * 3 / 4, $"100%={ink100} 40%={ink40}");
+
+            Check("离屏渲染：深/浅/液态玻璃三种主题出图互不相同",
+                Differing(fDark, fGlass) > 500 && Differing(fLight, fGlass) > 500
+                && Differing(fDark, fLight) > 500,
+                $"深-玻璃={Differing(fDark, fGlass)} 浅-玻璃={Differing(fLight, fGlass)} 深-浅={Differing(fDark, fLight)}");
+
+            // B 沉浸的模糊底和 C 氛围的取色底都在岛内整片铺开：它们的最终 alpha 必须跟着滑杆走，
+            // 否则"背景透明度"在媒体页会失效（早先 B 的合成底就是不透明的，滑杆看着没反应）
+            int bBg = AlphaAt(fB, 105, 140);
+            int bBg40 = AlphaAt(fB40, 105, 140);
+            int cBg = AlphaAt(fC, 105, 140);
+            int cBg40 = AlphaAt(fC40, 105, 140);
+            Check("离屏 alpha：B 沉浸背景跟随不透明度",
+                bBg > 200 && bBg40 > 0 && bBg40 < bBg, $"100%={bBg} 40%={bBg40}");
+            Check("离屏 alpha：C 氛围背景跟随不透明度",
+                cBg > 200 && cBg40 > 0 && cBg40 < cBg, $"100%={cBg} 40%={cBg40}");
         }
 
         w.WriteLine();

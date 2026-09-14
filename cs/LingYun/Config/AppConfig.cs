@@ -149,7 +149,7 @@ public static class ConfigStore
         cfg.ToolVersion = 2;
         if (cfg.Hour is < 0 or > 23) cfg.Hour = 23;
         if (cfg.Minute is < 0 or > 59) cfg.Minute = 0;
-        if (cfg.Theme is not ("dark" or "light" or "system")) cfg.Theme = "dark";
+        if (cfg.Theme is not ("dark" or "light" or "system" or "liquid-glass")) cfg.Theme = "dark";
         if (cfg.MonitorIndex < -1 || cfg.MonitorIndex > 15) cfg.MonitorIndex = -1;
         if (cfg.CompactScale is < 0.8 or > 1.5) cfg.CompactScale = 1.0;
         if (cfg.ExpandedScale is < 0.95 or > 1.25) cfg.ExpandedScale = 1.0;

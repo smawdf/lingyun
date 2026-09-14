@@ -37,6 +37,7 @@ public sealed class SettingsWindow : Window
     private readonly RadioButton _themeDark = new();
     private readonly RadioButton _themeLight = new();
     private readonly RadioButton _themeSystem = new();
+    private readonly RadioButton _themeLiquidGlass = new();
     private readonly RadioButton _styleA = new();
     private readonly RadioButton _styleB = new();
     private readonly RadioButton _styleC = new();
@@ -97,20 +98,20 @@ public sealed class SettingsWindow : Window
 
         // ---- 外观 ----
         AddSection(root, "外观");
-        AddRadioRow(root, "主题", new[] { ("深色", _themeDark), ("浅色", _themeLight), ("跟随系统", _themeSystem) });
+        AddRadioRow(root, "主题", new[]
+        {
+            ("深色", _themeDark), ("浅色", _themeLight),
+            ("跟随系统", _themeSystem), ("液态玻璃", _themeLiquidGlass),
+        });
         _themeDark.Checked += (_, _) => SetTheme("dark");
         _themeLight.Checked += (_, _) => SetTheme("light");
         _themeSystem.Checked += (_, _) => SetTheme("system");
+        _themeLiquidGlass.Checked += (_, _) => SetTheme("liquid-glass");
         AddRadioRow(root, "媒体页", new[] { ("A · 精修", _styleA), ("B · 沉浸", _styleB), ("C · 氛围", _styleC) }, "mediastyle");
         _styleA.Checked += (_, _) => SetMediaStyle("a");
         _styleB.Checked += (_, _) => SetMediaStyle("b");
         _styleC.Checked += (_, _) => SetMediaStyle("c");
-        AddSlider(root, "背景不透明", _opacity, _opacityLabel, v =>
-        {
-            _cfg.Opacity = (int)v;
-            _opacityLabel.Text = $"  {v:0}%";
-            _island.ApplyConfig();
-        });
+        AddOpacityPresets(root);
 
         // ---- 位置与大小 ----
         AddSection(root, "位置与大小");
@@ -264,6 +265,7 @@ public sealed class SettingsWindow : Window
         _themeDark.IsChecked = !IslandPalette.ResolveLight(_cfg.Theme, false) && _cfg.Theme != "system";
         _themeLight.IsChecked = string.Equals(_cfg.Theme, "light", StringComparison.OrdinalIgnoreCase);
         _themeSystem.IsChecked = string.Equals(_cfg.Theme, "system", StringComparison.OrdinalIgnoreCase);
+        _themeLiquidGlass.IsChecked = IslandPalette.IsLiquidGlass(_cfg.Theme);
         _styleA.IsChecked = _cfg.MediaStyle != "b" && _cfg.MediaStyle != "c";
         _styleB.IsChecked = _cfg.MediaStyle == "b";
         _styleC.IsChecked = _cfg.MediaStyle == "c";
@@ -324,6 +326,8 @@ public sealed class SettingsWindow : Window
 
     private void ResetAll()
     {
+        _themeDark.IsChecked = true;
+        _styleA.IsChecked = true;
         _compact.Value = 100;
         _expanded.Value = 100;
         _offsetX.Value = 0;
@@ -339,6 +343,49 @@ public sealed class SettingsWindow : Window
         {
             box.IsChecked = label is "系统通知弹窗" or "显示歌词" or "卡拉OK逐字" or "性能页网速";
         }
+    }
+
+    private void AddOpacityPresets(StackPanel root)
+    {
+        AddSlider(root, "背景透明度", _opacity, _opacityLabel, v =>
+        {
+            _cfg.Opacity = (int)v;
+            _opacityLabel.Text = $"  {v:0}%";
+            _island.ApplyConfig();
+        });
+
+        var row = new Grid { Margin = new Thickness(88, 2, 18, 0) };
+        var strip = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var (text, value) in new[]
+        {
+            ("轻透 40%", 40.0), ("半透 70%", 70.0), ("不透明 100%", 100.0),
+        })
+        {
+            var button = new Button
+            {
+                Content = text,
+                Height = 26,
+                Padding = new Thickness(8, 0, 8, 0),
+                Margin = new Thickness(strip.Children.Count == 0 ? 0 : 6, 0, 0, 0),
+                Foreground = _fg,
+                Background = _card,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                Tag = value,
+            };
+            button.Click += (_, _) => _opacity.Value = (double)button.Tag;
+            strip.Children.Add(button);
+        }
+        row.Children.Add(strip);
+        root.Children.Add(row);
+        root.Children.Add(new TextBlock
+        {
+            Text = "液态玻璃也会跟随此设置；滑杆可调 40–100% 任意值",
+            FontSize = 10.5,
+            Foreground = _sub,
+            Margin = new Thickness(88, 1, 18, 0),
+            TextWrapping = TextWrapping.Wrap,
+        });
     }
 
     private void AddSection(StackPanel root, string text)
