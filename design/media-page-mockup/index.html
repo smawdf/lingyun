@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>灵云 · 媒体展开页样式提案</title>
+<link rel="icon" href="data:,">
+<style>
+/* ============ 全局 ============ */
+:root{
+  --zoom: 1.25;
+  --w: 460px; --h: 320px; --r: 26px;
+  /* 深色（与 IslandPalette.DarkTheme 一致：纯黑机身） */
+  --body:#000000; --fg:#ffffff; --sub:#a0a0a0; --dim:#8c8c8c;
+  --accent:#60cdff; --track:rgba(255,255,255,.16); --card:rgba(255,255,255,.10);
+  --card-bd:rgba(255,255,255,.14); --glass:rgba(255,255,255,.10); --glass-bd:rgba(255,255,255,.16);
+  --shadow:0 24px 70px rgba(0,0,0,.6);
+}
+html[data-theme="light"]{
+  /* 浅色（与 IslandPalette.LightTheme 一致） */
+  --body:#f5f6f8; --fg:#18181a; --sub:#5c5c66; --dim:#6b6b75;
+  --accent:#0a7af0; --track:rgba(0,0,0,.14); --card:rgba(0,0,0,.06);
+  --card-bd:rgba(0,0,0,.09); --glass:rgba(255,255,255,.55); --glass-bd:rgba(0,0,0,.08);
+  --shadow:0 24px 70px rgba(30,40,60,.28);
+}
+*{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none}
+html,body{height:100%}
+body{
+  font-family:"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+  background:#232428;
+  background-image:
+    radial-gradient(1200px 500px at 20% -10%, rgba(96,205,255,.06), transparent 60%),
+    radial-gradient(1000px 500px at 85% 0%, rgba(168,85,247,.05), transparent 60%);
+  color:#e8eaed;
+  padding:18px 26px 40px;
+}
+html[data-theme="light"] body{background:#3a3d44;color:#e8eaed}
+
+/* ============ 顶栏 ============ */
+header.bar{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  max-width:1560px;margin:0 auto 26px;
+}
+.bar h1{font-size:17px;font-weight:600;letter-spacing:.2px}
+.bar .sub{font-size:12px;color:#9aa0a8}
+.bar .spacer{flex:1}
+.ctl{
+  display:flex;align-items:center;gap:8px;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);
+  border-radius:12px;padding:6px 10px;font-size:12.5px;
+}
+.ctl button{
+  font:inherit;color:#e8eaed;background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.12);border-radius:8px;
+  padding:4px 12px;cursor:pointer;
+}
+.ctl button:hover{background:rgba(255,255,255,.16)}
+.ctl button.on{background:var(--accent);color:#04222f;border-color:transparent;font-weight:600}
+.ctl select{
+  font:inherit;color:#e8eaed;background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:4px 8px;cursor:pointer;
+}
+.ctl .lbl{color:#9aa0a8}
+
+/* ============ 舞台（桌面模拟） ============ */
+.stage{max-width:1560px;margin:0 auto}
+.desktop{
+  position:relative;border-radius:20px;overflow:hidden;
+  min-height:calc(100vh - 150px);
+  display:flex;justify-content:center;align-items:flex-start;
+  padding:48px 40px 64px;
+  background:
+    radial-gradient(1100px 600px at 18% -8%, rgba(88,101,242,.20), transparent 55%),
+    radial-gradient(900px 500px at 85% 4%, rgba(168,85,247,.14), transparent 55%),
+    linear-gradient(180deg,#14161c 0%, #0d0e12 100%);
+  border:1px solid rgba(255,255,255,.07);
+  box-shadow:inset 0 0 120px rgba(0,0,0,.5);
+}
+html[data-theme="light"] .desktop{
+  background:
+    radial-gradient(1100px 600px at 18% -8%, rgba(120,150,255,.25), transparent 55%),
+    radial-gradient(900px 500px at 85% 4%, rgba(255,170,120,.18), transparent 55%),
+    linear-gradient(180deg,#e8ecf4 0%, #d7dce6 100%);
+  border:1px solid rgba(255,255,255,.5);
+}
+/* 模拟任务栏：岛实际悬浮在桌面顶部居中 */
+.taskbar{
+  position:absolute;left:50%;bottom:10px;transform:translateX(-50%);
+  width:min(560px,70%);height:34px;border-radius:12px;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.10);
+  display:flex;align-items:center;justify-content:center;gap:10px;
+}
+html[data-theme="light"] .taskbar{background:rgba(255,255,255,.55);border-color:rgba(0,0,0,.08)}
+.taskbar i{width:9px;height:9px;border-radius:3px;background:rgba(255,255,255,.35)}
+html[data-theme="light"] .taskbar i{background:rgba(0,0,0,.25)}
+.proposal{display:none;flex-direction:column;align-items:center;gap:14px}
+.proposal.active{display:flex;animation:propIn .32s ease}
+@keyframes propIn{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+.proposal>.tag{
+  font-size:12.5px;color:#c3c8cf;display:flex;align-items:center;gap:8px;
+}
+.proposal>.tag b{font-size:13.5px;color:#fff}
+.proposal>.tag .pill{
+  background:rgba(96,205,255,.14);color:#8fdcff;border:1px solid rgba(96,205,255,.3);
+  padding:2px 9px;border-radius:99px;font-size:11px;
+}
+.panel-wrap{zoom:var(--zoom)}
+
+/* ============ 面板公共 ============ */
+.panel{
+  position:relative;width:var(--w);height:var(--h);
+  border-radius:var(--r);overflow:hidden;
+  color:var(--fg);
+}
+.scheme-a .panel,.scheme-c .panel{background:var(--body);box-shadow:var(--shadow),0 0 0 1px rgba(255,255,255,.07)}
+html[data-theme="light"] .scheme-a .panel,
+html[data-theme="light"] .scheme-c .panel{box-shadow:var(--shadow),0 0 0 1px rgba(0,0,0,.08)}
+
+/* 图标 */
+.ic{width:1em;height:1em;display:inline-block;vertical-align:-.12em;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ic.fill{fill:currentColor;stroke:none}
+
+/* 关闭钮 */
+.xbtn{
+  position:absolute;top:12px;right:14px;width:26px;height:26px;border-radius:50%;
+  display:grid;place-items:center;font-size:13px;color:var(--dim);
+  background:transparent;border:none;cursor:pointer;transition:.15s;
+}
+.xbtn:hover{background:var(--card);color:var(--fg)}
+
+/* 玻璃 chip */
+.chip{
+  display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;
+  border-radius:99px;background:var(--glass);border:1px solid var(--glass-bd);
+  font-size:11.5px;color:var(--fg);cursor:pointer;white-space:nowrap;transition:.15s;
+}
+.chip:hover{filter:brightness(1.25)}
+.chip .appdot{width:14px;height:14px;border-radius:50%;flex:none}
+.chip .arr{color:var(--sub);font-size:10px}
+.appdot.edge{background:linear-gradient(135deg,#35d0c8,#0a84ff)}
+.appdot.netease{background:linear-gradient(135deg,#ec4141,#b32323)}
+.appdot.chrome{background:conic-gradient(#ea4335 0 33%,#fbbc05 33% 66%,#34a853 66% 100%)}
+
+/* seek 进度条 */
+.seek{position:absolute;height:14px;display:flex;align-items:center;cursor:pointer}
+.seek .rail{position:relative;height:4px;width:100%;border-radius:99px;background:var(--track);overflow:visible;transition:height .12s}
+.seek:hover .rail{height:6px}
+.seek .fill{position:absolute;left:0;top:0;bottom:0;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),#ffffff)}
+html[data-theme="light"] .seek .fill{background:linear-gradient(90deg,var(--accent),#4aa3ff)}
+.seek .dot{
+  position:absolute;top:50%;width:11px;height:11px;border-radius:50%;
+  background:#fff;transform:translate(-50%,-50%) scale(0);transition:transform .12s;
+  box-shadow:0 1px 5px rgba(0,0,0,.5);
+}
+.seek:hover .dot,.seek.drag .dot{transform:translate(-50%,-50%) scale(1)}
+
+/* 音量 */
+.vol{position:absolute;display:flex;align-items:center;gap:8px}
+.vol .vbtn{border:none;background:transparent;color:var(--sub);cursor:pointer;font-size:14px;display:grid;place-items:center;padding:2px}
+.vol .vbtn:hover{color:var(--fg)}
+.vol .vrail{width:86px;height:4px;border-radius:99px;background:var(--track);position:relative;cursor:pointer}
+.vol .vrail .vfill{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:var(--accent)}
+.vol .vpct{font-size:10.5px;color:var(--sub);width:30px}
+
+/* 歌词 */
+.lyr{position:absolute;left:0;right:0;text-align:center;pointer-events:none}
+.lyr .cur{position:relative;display:inline-block;max-width:calc(100% - 56px);white-space:nowrap}
+.lyr .cur .base{color:var(--dim)}
+.lyr .cur .lit{position:absolute;inset:0;color:var(--accent);overflow:hidden;white-space:nowrap}
+.lyr .next{color:var(--dim)}
+.lyr.fade{animation:lyrFade .35s ease}
+@keyframes lyrFade{from{opacity:.2;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* 传输键 */
+.transport{position:absolute;display:flex;align-items:center;gap:18px}
+.tbtn{
+  border:none;background:transparent;color:var(--fg);cursor:pointer;
+  display:grid;place-items:center;transition:.15s;border-radius:50%;
+}
+.tbtn:hover{transform:scale(1.12)}
+.tbtn:active{transform:scale(.94)}
+.tbtn.ghost{width:34px;height:34px;font-size:17px;color:var(--fg)}
+.tbtn.main{
+  width:46px;height:46px;font-size:18px;color:#0b0b0d;background:#fff;
+  box-shadow:0 6px 18px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.2) inset;
+}
+html[data-theme="light"] .tbtn.main{background:#18181a;color:#fff;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+
+/* 时间 */
+.times{position:absolute;font-size:11px;color:var(--sub);display:flex;justify-content:space-between}
+.times .neg{color:var(--dim)}
+
+/* 氛围底上的文字投影（实机对应：模糊层压暗 + 文字微阴影） */
+html[data-theme="dark"] .scheme-b .t1,
+html[data-theme="dark"] .scheme-b .t2,
+html[data-theme="dark"] .scheme-b .lyr,
+html[data-theme="dark"] .scheme-c .t1,
+html[data-theme="dark"] .scheme-c .t2,
+html[data-theme="dark"] .scheme-c .lyr{text-shadow:0 1px 10px rgba(0,0,0,.45)}
+html[data-theme="light"] .scheme-b .t1,
+html[data-theme="light"] .scheme-b .t2,
+html[data-theme="light"] .scheme-b .lyr,
+html[data-theme="light"] .scheme-c .t1,
+html[data-theme="light"] .scheme-c .t2,
+html[data-theme="light"] .scheme-c .lyr{text-shadow:0 1px 8px rgba(255,255,255,.45)}
+
+/* 封面 */
+.cover{position:relative;overflow:hidden;flex:none}
+.cover img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* home chip */
+.homechip{
+  position:absolute;display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 11px;
+  border-radius:99px;background:var(--card);border:1px solid var(--card-bd);
+  font-size:11.5px;color:var(--sub);cursor:pointer;transition:.15s;
+}
+.homechip:hover{color:var(--fg);background:var(--glass)}
+
+/* 跑马灯 */
+.mq{overflow:hidden;white-space:nowrap}
+.mq>.inner{display:inline-block}
+.mq.scroll>.inner{animation:mq 9s linear infinite alternate}
+@keyframes mq{from{transform:translateX(0)}to{transform:translateX(calc(-100% + 100cqw))}}
+.mq{container-type:inline-size}
+
+/* ============ 方案 A：精修 ============ */
+.scheme-a .cover{left:20px;top:18px;width:84px;height:84px;border-radius:16px;
+  box-shadow:0 10px 26px rgba(0,0,0,.5)}
+html[data-theme="light"] .scheme-a .cover{box-shadow:0 10px 24px rgba(30,40,60,.22)}
+.scheme-a .meta{position:absolute;left:118px;top:24px;right:20px}
+.scheme-a .t1{font-size:17px;font-weight:600;line-height:1.25}
+.scheme-a .t2{margin-top:5px;font-size:12.5px;color:var(--sub);display:flex;align-items:center;gap:6px}
+.scheme-a .srcchip{margin-top:9px}
+.scheme-a .seek{left:24px;right:24px;top:140px;width:auto}
+.scheme-a .times{left:24px;right:24px;top:156px}
+.scheme-a .lyr.cur-l{top:184px;font-size:15px;font-weight:600}
+.scheme-a .lyr.next-l{top:212px;font-size:12px}
+.scheme-a .transport{left:0;right:118px;bottom:22px;justify-content:center;gap:16px}
+.scheme-a .vol{right:20px;bottom:31px}
+.scheme-a .homechip{left:20px;bottom:22px}
+
+/* ============ 方案 B：沉浸（封面模糊背景） ============ */
+.scheme-b .panel{background:#101014}
+.scheme-b .bgimg{position:absolute;inset:-36px;background-size:cover;background-position:center;filter:blur(46px) saturate(1.35);transform:scale(1.1)}
+.scheme-b .veil{position:absolute;inset:0;background:rgba(0,0,0,.68)}
+html[data-theme="light"] .scheme-b .veil{background:rgba(245,246,248,.78)}
+.scheme-b .cover{left:20px;top:20px;width:96px;height:96px;border-radius:20px;
+  box-shadow:0 14px 34px rgba(0,0,0,.55)}
+.scheme-b .meta{position:absolute;left:134px;top:24px;right:48px}
+.scheme-b .srcchip{margin-bottom:8px}
+.scheme-b .t1{font-size:18px;font-weight:650;line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.scheme-b .t2{margin-top:4px;font-size:12.5px;color:var(--sub)}
+html[data-theme="light"] .scheme-b .t2{color:var(--sub)}
+.scheme-b .lyr{left:26px;right:26px;text-align:left}
+.scheme-b .lyr .cur{max-width:100%}
+.scheme-b .cur-l{top:158px;font-size:15.5px;font-weight:600}
+.scheme-b .next-l{top:188px;font-size:12.5px}
+.scheme-b .seek{left:26px;right:26px;top:222px;width:auto}
+.scheme-b .times{left:26px;right:26px;top:238px}
+.scheme-b .bar{
+  position:absolute;left:16px;right:16px;bottom:16px;height:52px;border-radius:17px;
+  background:var(--glass);border:1px solid var(--glass-bd);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  display:flex;align-items:center;justify-content:space-between;padding:0 16px;
+}
+.scheme-b .bar .transport{position:static;gap:14px}
+.scheme-b .tbtn.ghost{width:30px;height:30px;font-size:15px}
+.scheme-b .tbtn.main{width:38px;height:38px;font-size:15px}
+.scheme-b .homechip{position:static;height:24px;font-size:11px}
+.scheme-b .vol{position:static}
+.scheme-b .vol .vrail{width:72px}
+
+/* ============ 方案 C：氛围渐变海报 ============ */
+.scheme-c .panel{background:#0a0a0c}
+.scheme-c .glow{position:absolute;width:340px;height:340px;border-radius:50%;
+  right:-70px;top:-120px;filter:blur(90px);opacity:.5;background:var(--tz,var(--accent));transition:background 1s}
+.scheme-c .glow2{position:absolute;width:260px;height:260px;border-radius:50%;
+  left:-90px;bottom:-140px;filter:blur(80px);opacity:.32;background:var(--tz2,var(--accent));transition:background 1s}
+html[data-theme="light"] .scheme-c .panel{background:#fbfbfd}
+html[data-theme="light"] .scheme-c .glow{opacity:.30}
+html[data-theme="light"] .scheme-c .glow2{opacity:.2}
+.scheme-c .cover{left:24px;top:28px;width:104px;height:104px;border-radius:22px;transform:rotate(-2.5deg);
+  box-shadow:0 18px 40px rgba(0,0,0,.55);transition:transform .3s}
+.scheme-c .panel:hover .cover{transform:rotate(0)}
+html[data-theme="light"] .scheme-c .cover{box-shadow:0 14px 30px rgba(30,40,60,.25)}
+.scheme-c .meta{position:absolute;left:150px;top:40px;right:46px}
+.scheme-c .t1{font-size:21px;font-weight:750;line-height:1.24;letter-spacing:.2px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.scheme-c .t2{margin-top:7px;font-size:13px;color:var(--sub)}
+.scheme-c .srcchip{position:absolute;top:14px;right:48px}
+html[data-theme="light"] .scheme-c .srcchip{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.08)}
+html[data-theme="light"] .scheme-c .xbtn{color:#6b6b75}
+html[data-theme="light"] .scheme-c .xbtn:hover{background:rgba(0,0,0,.06)}
+.scheme-c .lyr.cur-l{top:178px;font-size:15.5px;font-weight:650}
+.scheme-c .lyr.next-l{top:206px;font-size:12.5px}
+.scheme-c .seek{left:28px;right:28px;top:236px;width:auto}
+.scheme-c .times{left:28px;right:28px;top:252px}
+.scheme-c .transport{left:0;right:120px;bottom:20px;justify-content:center;gap:16px}
+.scheme-c .vol{right:22px;bottom:29px}
+.scheme-c .homechip{left:22px;bottom:22px}
+html[data-theme="light"] .scheme-c .t2{color:var(--sub)}
+
+/* ============ 注释 ============ */
+.notes{
+  width:calc(var(--w) * var(--zoom));max-width:96vw;
+  font-size:12px;line-height:1.75;color:#aeb4bc;
+  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;padding:12px 16px;
+}
+.notes b{color:#e8eaed;font-weight:600}
+.notes .k{color:#8fdcff}
+</style>
+</head>
+<body>
+
+<!-- SVG 图标库 -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a.6.6 0 0 0 .9.5l10.4-6.5a.6.6 0 0 0 0-1L8.9 5a.6.6 0 0 0-.9.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.4"/><rect x="13.5" y="5" width="4" height="14" rx="1.4"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><rect x="5" y="5.5" width="2.4" height="13" rx="1.2"/><path d="M19 6.6v10.8a.6.6 0 0 1-.93.5l-8-5.4a.6.6 0 0 1 0-1l8-5.4a.6.6 0 0 1 .93.5z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><rect x="16.6" y="5.5" width="2.4" height="13" rx="1.2"/><path d="M5 6.6v10.8a.6.6 0 0 0 .93.5l8-5.4a.6.6 0 0 0 0-1l-8-5.4A.6.6 0 0 0 5 6.6z"/></symbol>
+  <symbol id="i-vol" viewBox="0 0 24 24"><path class="spk" d="M4 9.5v5a1 1 0 0 0 1 1h2.6l3.9 3.2a.7.7 0 0 0 1.15-.54V5.84A.7.7 0 0 0 11.5 5.3L7.6 8.5H5a1 1 0 0 0-1 1z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M17.8 6.8a7.2 7.2 0 0 1 0 10.4" stroke-width="1.6" fill="none"/></symbol>
+  <symbol id="i-volx" viewBox="0 0 24 24"><path d="M4 9.5v5a1 1 0 0 0 1 1h2.6l3.9 3.2a.7.7 0 0 0 1.15-.54V5.84A.7.7 0 0 0 11.5 5.3L7.6 8.5H5a1 1 0 0 0-1 1z"/><path d="M16 9.5l5 5M21 9.5l-5 5" stroke-width="1.8" fill="none"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4.5 10.6 12 4.4l7.5 6.2v7.4a1.5 1.5 0 0 1-1.5 1.5h-3.4v-5.2a1 1 0 0 0-1-1h-3.2a1 1 0 0 0-1 1v5.2H6a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+</svg>
+
+<header class="bar">
+  <div>
+    <h1>灵云 · 媒体展开页样式提案</h1>
+    <div class="sub">单面板切换预览（按钮 / 快捷键 1·2·3 / ←→）· 460×320 与实机等大 · 数据为示意（歌词为自写占位句）</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="ctl">
+    <span class="lbl">方案</span>
+    <button data-scheme="a" class="on">A · 精修</button>
+    <button data-scheme="b">B · 沉浸</button>
+    <button data-scheme="c">C · 氛围</button>
+  </div>
+  <div class="ctl">
+    <button id="btnPlay" class="on">▶ 播放中</button>
+    <span class="lbl">曲目</span>
+    <select id="selTrack"></select>
+  </div>
+  <div class="ctl">
+    <span class="lbl">主题</span>
+    <button id="btnDark" class="on">深色</button>
+    <button id="btnLight">浅色</button>
+  </div>
+  <div class="ctl">
+    <span class="lbl">缩放</span>
+    <button data-z="1">100%</button>
+    <button data-z="1.25" class="on">125%</button>
+    <button data-z="1.6">160%</button>
+  </div>
+</header>
+
+<main class="stage">
+<div class="desktop">
+
+  <!-- ══════════ 方案 A ══════════ -->
+  <section class="proposal scheme-a">
+    <div class="tag"><b>A · 精修</b><span>结构不变，质感重做 — 实现风险最低</span><span class="pill">推荐先落地</span></div>
+    <div class="panel-wrap"><div class="panel">
+      <img class="cover art" alt="">
+      <button class="xbtn"><svg class="ic"><use href="#i-x"/></svg></button>
+      <div class="meta">
+        <div class="t1 mq"><span class="inner txt-title"></span></div>
+        <div class="t2"><span class="txt-artist">YOASOBI</span> · <span class="txt-src">Edge 浏览器</span></div>
+        <button class="chip srcchip"><span class="appdot appicon"></span><span class="arr">‹</span><span class="txt-page">来源 1/3</span><span class="arr">›</span></button>
+      </div>
+      <div class="seek"><div class="rail"><div class="fill"></div><div class="dot"></div></div></div>
+      <div class="times"><span class="t-pos">0:00</span><span class="neg t-dur">-0:00</span></div>
+      <div class="lyr cur-l"><span class="cur"><span class="base lyr-text"></span><span class="lit"><span class="lyr-text"></span></span></span></div>
+      <div class="lyr next-l lyr-text-next"></div>
+      <button class="homechip"><svg class="ic"><use href="#i-home"/></svg>面板</button>
+      <div class="transport">
+        <button class="tbtn ghost b-prev"><svg class="ic fill"><use href="#i-prev"/></svg></button>
+        <button class="tbtn main b-play"><svg class="ic fill"><use href="#i-play"/></svg></button>
+        <button class="tbtn ghost b-next"><svg class="ic fill"><use href="#i-next"/></svg></button>
+      </div>
+      <div class="vol">
+        <button class="vbtn"><svg class="ic"><use class="use-vol" href="#i-vol"/></svg></button>
+        <div class="vrail"><div class="vfill"></div></div>
+        <span class="vpct">40%</span>
+      </div>
+    </div></div>
+    <div class="notes">
+      <b>保留现版结构</b>（左封面 / 中进度 / 底传输），全部重画质感：封面 84px 圆角+投影；
+      进度条 4px 圆头 + 封面主色渐变 + 悬停放大出现拖点；主播放钮改 <b>白底黑标圆钮</b>；
+      来源切换器移到信息区（右上角让给关闭钮）；时间右侧改 <b>-剩余</b>。
+      <br><span class="k">Skia 落地：</span>渐变 / 圆钮 / 描边全是现成能力，改动集中在 DrawExpanded 媒体分支，最稳。
+    </div>
+  </section>
+
+  <!-- ══════════ 方案 B ══════════ -->
+  <section class="proposal scheme-b">
+    <div class="tag"><b>B · 沉浸</b><span>封面模糊铺满 + 玻璃控制条 — Apple Music / iOS 岛气质</span><span class="pill">氛围最强</span></div>
+    <div class="panel-wrap"><div class="panel">
+      <div class="bgimg art-bg"></div>
+      <div class="veil"></div>
+      <img class="cover art" alt="">
+      <button class="xbtn"><svg class="ic"><use href="#i-x"/></svg></button>
+      <div class="meta">
+        <button class="chip srcchip"><span class="appdot appicon"></span><span class="txt-src2">Edge · 1/3</span><span class="arr">›</span></button>
+        <div class="t1 txt-title"></div>
+        <div class="t2 txt-artist"></div>
+      </div>
+      <div class="lyr cur-l"><span class="cur"><span class="base lyr-text"></span><span class="lit"><span class="lyr-text"></span></span></span></div>
+      <div class="lyr next-l lyr-text-next"></div>
+      <div class="seek"><div class="rail"><div class="fill"></div><div class="dot"></div></div></div>
+      <div class="times"><span class="t-pos">0:00</span><span class="neg t-dur">-0:00</span></div>
+      <div class="bar">
+        <div class="transport">
+          <button class="tbtn ghost b-prev"><svg class="ic fill"><use href="#i-prev"/></svg></button>
+          <button class="tbtn main b-play"><svg class="ic fill"><use href="#i-play"/></svg></button>
+          <button class="tbtn ghost b-next"><svg class="ic fill"><use href="#i-next"/></svg></button>
+        </div>
+        <button class="homechip"><svg class="ic"><use href="#i-home"/></svg>面板</button>
+        <div class="vol">
+          <button class="vbtn"><svg class="ic"><use class="use-vol" href="#i-vol"/></svg></button>
+          <div class="vrail"><div class="vfill"></div></div>
+        </div>
+      </div>
+    </div></div>
+    <div class="notes">
+      背景由<b>当前封面高斯模糊 + 暗化</b>铺满，正文浮在氛围上：信息区「来源 chip → 两行标题 → 歌手」，
+      歌词左对齐（Music 式），底部一条<b>玻璃控制条</b>（传输 / 面板 / 音量三段）。
+      <br><span class="k">Skia 落地：</span>封面模糊用 SKImageFilter.CreateBlur，<b>换曲时才重烘焙一次位图缓存</b>，逐帧成本 ≈ 0；
+      玻璃条 = 半透明底 + 1px 描边。风险：模糊底上的对比度要按主题调遮罩。
+    </div>
+  </section>
+
+  <!-- ══════════ 方案 C ══════════ -->
+  <section class="proposal scheme-c">
+    <div class="tag"><b>C · 氛围海报</b><span>封面取色渐变 + 海报排版 — 个性最强</span><span class="pill">最抢眼</span></div>
+    <div class="panel-wrap"><div class="panel">
+      <div class="glow"></div><div class="glow2"></div>
+      <img class="cover art" alt="">
+      <button class="xbtn"><svg class="ic"><use href="#i-x"/></svg></button>
+      <button class="chip srcchip"><span class="appdot appicon"></span><span class="txt-page">来源 1/3</span><span class="arr">›</span></button>
+      <div class="meta">
+        <div class="t1 txt-title"></div>
+        <div class="t2"><span class="txt-artist">YOASOBI</span> · <span class="txt-src">Edge 浏览器</span></div>
+      </div>
+      <div class="lyr cur-l"><span class="cur"><span class="base lyr-text"></span><span class="lit"><span class="lyr-text"></span></span></span></div>
+      <div class="lyr next-l lyr-text-next"></div>
+      <div class="seek"><div class="rail"><div class="fill"></div><div class="dot"></div></div></div>
+      <div class="times"><span class="t-pos">0:00</span><span class="neg t-dur">-0:00</span></div>
+      <button class="homechip"><svg class="ic"><use href="#i-home"/></svg>面板</button>
+      <div class="transport">
+        <button class="tbtn ghost b-prev"><svg class="ic fill"><use href="#i-prev"/></svg></button>
+        <button class="tbtn main b-play"><svg class="ic fill"><use href="#i-play"/></svg></button>
+        <button class="tbtn ghost b-next"><svg class="ic fill"><use href="#i-next"/></svg></button>
+      </div>
+      <div class="vol">
+        <button class="vbtn"><svg class="ic"><use class="use-vol" href="#i-vol"/></svg></button>
+        <div class="vrail"><div class="vfill"></div></div>
+        <span class="vpct">40%</span>
+      </div>
+    </div></div>
+    <div class="notes">
+      背景是<b>封面主色提取的两团柔光</b>（右上主色光斑 + 左下副色光斑）压在近黑底上，
+      封面 104px 微倾海报化（悬停回正），标题最大 21px。每首歌自带专属氛围色。
+      <br><span class="k">Skia 落地：</span>主色 = 封面降采样统计（换曲算一次），两团光 = 两个径向渐变；
+      其余同 A。风险：与「纯黑融合任务栏」的既有审美差异最大，颜色可能随封面跳动。
+    </div>
+  </section>
+
+  <div class="taskbar"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+</div>
+</main>
+
+<script>
+/* ================= 数据 ================= */
+const TRACKS = [
+  { title:"アイドル（Idol）", artist:"YOASOBI", dur:213, cover:"assets/idol.jpg",
+    accent:"#a855f7", accent2:"#ec4899", app:"edge",
+    lyrics:[
+      ["0:00","（前奏 · 心跳渐起）"],
+      ["0:08","霓虹亮起的十字路口"],
+      ["0:16","人潮把心事藏进口袋"],
+      ["0:24","你的影子在光里跳动"],
+      ["0:32","夏天涌进了这只耳机"],
+      ["0:40","世界只剩节拍与呼吸"],
+      ["0:48","（间奏）"]]},
+  { title:"七里香", artist:"周杰伦", dur:279, cover:"assets/jasmine.jpg",
+    accent:"#f0a832", accent2:"#e05e3a", app:"netease",
+    lyrics:[
+      ["0:00","（前奏 · 雨声）"],
+      ["0:10","窗台上的雨刚停"],
+      ["0:20","院子里的橘猫伸了个懒腰"],
+      ["0:30","夏天把整条街染成暖色"],
+      ["0:40","风把页码翻到有你的那页"],
+      ["0:50","时光慢得刚刚好"],
+      ["1:00","（间奏）"]]},
+  { title:"なんでもないや (Movie Ver.)", artist:"RADWIMPS", dur:262, cover:"assets/nandemonaiya.jpg",
+    accent:"#4fb8f0", accent2:"#2e6fd0", app:"chrome",
+    lyrics:[
+      ["0:00","（钢琴前奏）"],
+      ["0:12","黄昏把车站拉得很长"],
+      ["0:24","电车驶过刚下过雨的街道"],
+      ["0:36","没说出口的话变成了口哨"],
+      ["0:48","反正也没什么大不了"],
+      ["1:00","明天见，一定要明天见"],
+      ["1:12","（间奏）"]]},
+  { title:"Lover", artist:"Taylor Swift", dur:221, cover:"assets/lover.jpg",
+    accent:"#f472b6", accent2:"#818cf8", app:"netease",
+    lyrics:[
+      ["0:00","（前奏）"],
+      ["0:10","我们可以让圣诞灯亮一整年"],
+      ["0:20","把厨房的旧椅子留给花园"],
+      ["0:30","门口留一个你的位置"],
+      ["0:40","这是一场两个人的小冒险"],
+      ["0:50","sway with me, hey"],
+      ["1:00","（间奏）"]]},
+  { title:"Blinding Lights", artist:"The Weeknd", dur:200, cover:"assets/blinding.jpg",
+    accent:"#ef4444", accent2:"#7c3aed", app:"edge",
+    lyrics:[
+      ["0:00","（合成器前奏）"],
+      ["0:08","凌晨的城市空无一人"],
+      ["0:16","霓虹把街道烫成红色"],
+      ["0:24","我只需要你在的样子"],
+      ["0:32","穿过这片刺眼的光"],
+      ["0:40","sin city's cold and empty"],
+      ["0:48","（间奏）"]]},
+];
+const SESSIONS = [
+  { key:"edge",    name:"Edge 浏览器" },
+  { key:"netease", name:"网易云音乐" },
+  { key:"chrome",  name:"Chrome" },
+];
+
+/* ================= 状态 ================= */
+const S = {
+  playing:true, pos:22, track:0, session:0, scheme:"a",
+  volume:0.4, muted:false,
+};
+const tracks = TRACKS.map(t=>({
+  ...t,
+  lyrics:t.lyrics.map(([mmss,text])=>{
+    const [m,s]=mmss.split(":").map(Number); return {t:m*60+s, text};
+  })
+}));
+
+/* ================= 工具 ================= */
+const $  = (sel,r=document)=>r.querySelector(sel);
+const $$ = (sel,r=document)=>[...r.querySelectorAll(sel)];
+const fmt = s=>{ s=Math.max(0,Math.round(s)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; };
+const clamp01 = v=>Math.min(1,Math.max(0,v));
+
+function lyricIdx(tr,pos){
+  let idx=-1;
+  for(let i=0;i<tr.lyrics.length;i++){ if(tr.lyrics[i].t<=pos) idx=i; else break; }
+  return idx;
+}
+function lyricProgress(tr,pos,idx){
+  if(idx<0) return 0;
+  const a=tr.lyrics[idx].t;
+  const b=idx+1<tr.lyrics.length ? tr.lyrics[idx+1].t : a+4;
+  return clamp01((pos-a)/Math.max(1,b-a));
+}
+
+/* ================= 渲染 ================= */
+const roots = [".scheme-a",".scheme-b",".scheme-c"].map(sel=>$(sel));
+let lastKaraoke = [[-1],[-1],[-1]];
+
+function renderScheme(root, i){
+  const tr = tracks[S.track];
+  const ses = SESSIONS[S.session];
+
+  // 封面 / 氛围色（只在实际变化时更新）
+  const art = $(".art",root), artBg = $(".art-bg",root);
+  if(art && !art.src.endsWith(tr.cover)) art.src = tr.cover;
+  if(artBg && artBg.dataset.k!==tr.cover){ artBg.style.backgroundImage=`url(${tr.cover})`; artBg.dataset.k=tr.cover; }
+  root.style.setProperty("--tz", tr.accent);
+  root.style.setProperty("--tz2", tr.accent2);
+
+  // 文本
+  $(".txt-title",root).textContent = tr.title;
+  const tArtist = $(".txt-artist",root); if(tArtist) tArtist.textContent = tr.artist;
+  const tStatus = $(".txt-status",root); if(tStatus) tStatus.textContent = S.playing?"正在播放":"已暂停";
+  const tSrc = $(".txt-src",root); if(tSrc) tSrc.textContent = ses.name;
+  const tSrc2 = $(".txt-src2",root); if(tSrc2) tSrc2.textContent = `${ses.name} · ${S.session+1}/${SESSIONS.length}`;
+  const tPage = $(".txt-page",root); if(tPage) tPage.textContent = `来源 ${S.session+1}/${SESSIONS.length}`;
+  $$(".appicon",root).forEach(d=>{ d.className = "appdot appicon "+ses.key; });
+
+  // 跑马灯判定（方案 A）
+  const mq = $(".mq",root);
+  if(mq){
+    const inner = $(".inner",mq);
+    requestAnimationFrame(()=>{
+      mq.classList.toggle("scroll", inner.scrollWidth > mq.clientWidth + 2);
+    });
+  }
+
+  // 进度
+  const p = clamp01(S.pos / tr.dur);
+  $$(".seek",root).forEach(sek=>{
+    $(".fill",sek).style.width = (p*100)+"%";
+    $(".dot",sek).style.left = (p*100)+"%";
+  });
+  const tp = $(".t-pos",root); if(tp) tp.textContent = fmt(S.pos);
+  const td = $(".t-dur",root); if(td) td.textContent = "-"+fmt(tr.dur-S.pos);
+
+  // 歌词
+  const idx = lyricIdx(tr,S.pos);
+  const line = idx>=0 ? tr.lyrics[idx].text : "";
+  const nxt  = (idx>=0 && idx+1<tr.lyrics.length) ? tr.lyrics[idx+1].text : "";
+  const curBox = $(".lyr.cur-l",root);
+  $$(".lyr-text",curBox).forEach(el=>el.textContent=line);
+  $(".lyr-text-next",root).textContent = nxt;
+  const prog = lyricProgress(tr,S.pos,idx);
+  $(".lit",curBox).style.clipPath = `inset(0 ${100-prog*100}% 0 0)`;
+  if(lastKaraoke[i]!==idx){
+    lastKaraoke[i]=idx;
+    curBox.classList.remove("fade"); void curBox.offsetWidth; curBox.classList.add("fade");
+  }
+
+  // 传输键图标
+  $$(".b-play use",root).forEach(u=>u.setAttribute("href", S.playing?"#i-pause":"#i-play"));
+
+  // 音量
+  const v = S.muted?0:S.volume;
+  $$(".vol",root).forEach(vr=>{
+    $(".vfill",vr).style.width = (v*100)+"%";
+    const u=$(".use-vol",vr); if(u) u.setAttribute("href", S.muted||v===0?"#i-volx":"#i-vol");
+    const pct=$(".vpct",vr); if(pct) pct.textContent = S.muted?"静音":Math.round(v*100)+"%";
+  });
+}
+function renderAll(){ roots.forEach(renderScheme); }
+
+/* ================= 交互 ================= */
+// 播放/暂停（顶栏 + 每个面板的主钮）
+function togglePlay(){
+  S.playing=!S.playing;
+  const b=$("#btnPlay");
+  b.textContent = S.playing?"▶ 播放中":"⏸ 已暂停";
+  b.classList.toggle("on",S.playing);
+  renderAll();
+}
+$("#btnPlay").onclick=togglePlay;
+roots.forEach(r=>$(".b-play",r).onclick=togglePlay);
+
+// 顶栏曲目
+const sel=$("#selTrack");
+TRACKS.forEach((t,i)=>{
+  const o=document.createElement("option");
+  o.value=i; o.textContent=`${i+1}. ${t.title}`;
+  sel.appendChild(o);
+});
+sel.onchange=()=>{ S.track=+sel.value; S.pos=20; lastKaraoke=[-1,-1,-1]; renderAll(); };
+
+// 主题
+const bd=document.getElementById("btnDark"), bl=document.getElementById("btnLight");
+function setTheme(t){
+  document.documentElement.dataset.theme=t;
+  bd.classList.toggle("on",t==="dark"); bl.classList.toggle("on",t==="light");
+}
+bd.onclick=()=>setTheme("dark"); bl.onclick=()=>setTheme("light");
+
+// 缩放
+$$("[data-z]").forEach(b=>b.onclick=()=>{
+  document.documentElement.style.setProperty("--zoom",b.dataset.z);
+  $$("[data-z]").forEach(x=>x.classList.toggle("on",x===b));
+  setTimeout(renderAll,60);
+});
+
+// 方案切换：按钮 / 快捷键 1-3 / ←→ / #hash 记忆
+const SCHEMES=["a","b","c"];
+function setScheme(k){
+  if(!SCHEMES.includes(k)) k="a";
+  S.scheme=k;
+  $$(".proposal").forEach(p=>p.classList.toggle("active", p.classList.contains("scheme-"+k)));
+  $$("[data-scheme]").forEach(b=>b.classList.toggle("on", b.dataset.scheme===k));
+  try{ history.replaceState(null,"","#"+k); }catch(e){}
+}
+$$("[data-scheme]").forEach(b=>b.onclick=()=>setScheme(b.dataset.scheme));
+window.addEventListener("keydown",ev=>{
+  const tag=document.activeElement && document.activeElement.tagName;
+  if(tag==="SELECT"||tag==="INPUT") return;
+  if(ev.key>="1"&&ev.key<="3") setScheme(SCHEMES[+ev.key-1]);
+  else if(ev.key==="ArrowRight") setScheme(SCHEMES[(SCHEMES.indexOf(S.scheme)+1)%3]);
+  else if(ev.key==="ArrowLeft") setScheme(SCHEMES[(SCHEMES.indexOf(S.scheme)+2)%3]);
+  else if(ev.code==="Space" && tag!=="BUTTON"){ ev.preventDefault(); togglePlay(); }
+});
+
+// 来源切换（点击 chip 循环）
+roots.forEach(r=>$(".srcchip",r).onclick=()=>{
+  S.session=(S.session+1)%SESSIONS.length; renderAll();
+});
+
+// seek：点击 / 拖动
+roots.forEach(r=>{
+  const sek=$(".seek",r);
+  const seekTo=ev=>{
+    const rect=$(".rail",sek).getBoundingClientRect();
+    S.pos=clamp01((ev.clientX-rect.left)/rect.width)*tracks[S.track].dur;
+    lastKaraoke=[-1,-1,-1]; renderAll();
+  };
+  sek.addEventListener("pointerdown",ev=>{
+    sek.setPointerCapture(ev.pointerId); sek.classList.add("drag"); seekTo(ev);
+  });
+  sek.addEventListener("pointermove",ev=>{ if(sek.classList.contains("drag")) seekTo(ev); });
+  sek.addEventListener("pointerup",()=>sek.classList.remove("drag"));
+});
+
+// 音量：点击 / 拖动 + 静音
+roots.forEach(r=>{
+  const vr=$(".vol",r), rail=$(".vrail",vr);
+  const setVol=ev=>{
+    const rect=rail.getBoundingClientRect();
+    S.volume=clamp01((ev.clientX-rect.left)/rect.width); S.muted=false; renderAll();
+  };
+  rail.addEventListener("pointerdown",ev=>{
+    rail.setPointerCapture(ev.pointerId); rail.dataset.drag="1"; setVol(ev);
+  });
+  rail.addEventListener("pointermove",ev=>{ if(rail.dataset.drag) setVol(ev); });
+  rail.addEventListener("pointerup",()=>delete rail.dataset.drag);
+  $(".vbtn",vr).onclick=()=>{ S.muted=!S.muted; renderAll(); };
+});
+
+/* ================= 时钟 ================= */
+let last=performance.now();
+function tick(now){
+  const dt=(now-last)/1000; last=now;
+  if(S.playing){
+    S.pos+=dt;
+    if(S.pos>=tracks[S.track].dur){ S.pos=0; }
+    renderAll();
+  }
+  requestAnimationFrame(tick);
+}
+setScheme(location.hash.slice(1)||"a");
+renderAll();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

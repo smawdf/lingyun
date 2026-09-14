@@ -1,0 +1,21 @@
+{
+  "tool_version": 2,
+  "enabled": false,
+  "weekdays": [],
+  "dates": [],
+  "hour": 23,
+  "minute": 0,
+  "theme": "light",
+  "monitor_index": 0,
+  "action": "shutdown",
+  "also_pause_media": false,
+  "location": "",
+  "tasks": [],
+  "animation_style": "Fluid Blobs",
+  "spectrum": true,
+  "compact_scale": 1,
+  "expanded_scale": 1,
+  "offset_x": 0,
+  "offset_y": 8,
+  "lyrics": true
+}

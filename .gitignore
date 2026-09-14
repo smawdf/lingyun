@@ -1,0 +1,51 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+灵云.log
+早睡.log
+.zcode/
+.pytest_cache/
+
+# --- C# / .NET ---
+bin/
+obj/
+publish/
+*.user
+*.suo
+.vs/
+
+# 发布产物（197 MB 自包含单文件，不入库；用 Release / 网盘分发）
+灵云-cs.exe
+lingyun.exe
+
+# 运行时与诊断产物
+灵云-crash.log
+灵云-diag.txt
+灵云-diag/
+
+# 通用临时诊断输出
+.playwright-cli/
+final-self-test.txt
+mp.json
+design/_cmp/
+
+# 本地工作区数据
+.workbuddy/
+
+# 第三方参考仓库（只读对照，不入库）
+.references/
+
+# 退出链路埋点（诊断用，不入库）
+灵云-exit-trace.log
+_msg.txt
+
+# 点击链路埋点（诊断用）
+灵云-click-trace.log
+
+# 定位链路埋点（诊断用）
+灵云-loc-trace.log
+
+# 通知链路埋点（点击 → 唤醒 → 结果）
+灵云-toast-trace.log

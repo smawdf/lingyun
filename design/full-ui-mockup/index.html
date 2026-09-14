@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>灵云 · 全页面 UI 重设计提案</title>
+<link rel="icon" href="data:,">
+<style>
+/* ================= 设计令牌 ================= */
+:root{
+  --zoom:1.15;
+  /* 深色：纯黑机身（用户指定），玻璃卡片 + 每页专属强调色 */
+  --body:#000000; --fg:#ffffff; --sub:#a0a0a0; --dim:#8c8c8c;
+  --accent:#60cdff; --danger:#ff6b6b; --ok:#4ad97a;
+  --card:rgba(255,255,255,.065); --card-bd:rgba(255,255,255,.10);
+  --card-hi:rgba(255,255,255,.11); --track:rgba(255,255,255,.14);
+  --glass:rgba(255,255,255,.10); --glass-bd:rgba(255,255,255,.16);
+  --shadow:0 30px 80px rgba(0,0,0,.65);
+  /* 各页强调色（深色） */
+  --ac-plan:#60cdff; --ac-perf:#4ade80; --ac-weather:#38bdf8;
+  --ac-tasks:#a78bfa; --ac-month:#fbbf24; --ac-quick:#f87171; --ac-media:#60cdff;
+}
+html[data-theme="light"]{
+  --body:#f5f6f8; --fg:#18181a; --sub:#5c5c66; --dim:#6b6b75;
+  --accent:#0a7af0; --danger:#cc2b2b; --ok:#148f45;
+  --card:rgba(0,0,0,.05); --card-bd:rgba(0,0,0,.09);
+  --card-hi:rgba(0,0,0,.09); --track:rgba(0,0,0,.13);
+  --glass:rgba(255,255,255,.6); --glass-bd:rgba(0,0,0,.08);
+  --shadow:0 30px 80px rgba(30,40,60,.30);
+  --ac-plan:#0a7af0; --ac-perf:#148f45; --ac-weather:#0284c7;
+  --ac-tasks:#7c3aed; --ac-month:#b45309; --ac-quick:#dc2626; --ac-media:#0a7af0;
+}
+*{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none}
+html,body{height:100%}
+body{
+  font-family:"Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+  background:#1c1d22;color:#e8eaed;overflow:hidden;
+  display:flex;flex-direction:column;
+}
+
+/* ================= 顶栏 ================= */
+header.bar{
+  display:flex;align-items:center;gap:14px;padding:12px 20px 10px;flex-wrap:wrap;
+}
+.bar h1{font-size:16px;font-weight:600}
+.bar .sub{font-size:11.5px;color:#9aa0a8}
+.bar .spacer{flex:1}
+.ctl{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.09);border-radius:11px;padding:5px 9px;font-size:12px}
+.ctl .lbl{color:#9aa0a8}
+.ctl button{font:inherit;color:#e8eaed;background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.11);border-radius:7px;padding:3px 11px;cursor:pointer}
+.ctl button:hover{background:rgba(255,255,255,.15)}
+.ctl button.on{background:var(--accent);color:#04222f;border-color:transparent;font-weight:600}
+
+/* ================= 主体布局 ================= */
+main{flex:1;display:flex;min-height:0}
+nav.side{
+  width:200px;flex:none;overflow-y:auto;padding:6px 12px 16px;
+}
+nav.side .grp{font-size:10.5px;color:#7d838c;margin:14px 6px 6px;letter-spacing:.5px}
+nav.side .grp:first-child{margin-top:4px}
+nav.side button{
+  display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  font:inherit;font-size:12.5px;color:#c9ced5;background:transparent;border:none;
+  border-radius:9px;padding:7px 10px;cursor:pointer;
+}
+nav.side button:hover{background:rgba(255,255,255,.06)}
+nav.side button.on{background:rgba(96,205,255,.13);color:#fff}
+nav.side button .dot{width:7px;height:7px;border-radius:50%;flex:none}
+nav.side button .k{margin-left:auto;font-size:10px;color:#5d626b}
+
+.stage{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.desktop{
+  position:relative;flex:1;margin:0 20px 0 4px;border-radius:18px;overflow:hidden;
+  background:linear-gradient(rgba(0,0,0,.25),rgba(0,0,0,.35)),url("assets/wallpaper-dark.jpg") center/cover;
+  display:flex;justify-content:center;align-items:flex-start;
+}
+html[data-theme="light"] .desktop{
+  background:linear-gradient(rgba(255,255,255,.12),rgba(255,255,255,.18)),url("assets/wallpaper-light.jpg") center/cover;
+}
+.desktop.nowall{
+  background:radial-gradient(900px 500px at 20% -10%,rgba(88,101,242,.16),transparent 55%),
+             radial-gradient(800px 420px at 85% 0,rgba(168,85,247,.12),transparent 55%),
+             linear-gradient(180deg,#15161c,#0d0e12);
+}
+html[data-theme="light"] .desktop.nowall{
+  background:radial-gradient(900px 500px at 20% -10%,rgba(120,150,255,.20),transparent 55%),
+             linear-gradient(180deg,#e6eaf2,#d5dae4);
+}
+.taskbar{
+  position:absolute;left:50%;bottom:10px;transform:translateX(-50%);
+  width:min(520px,62%);height:34px;border-radius:12px;
+  background:rgba(20,22,28,.55);border:1px solid rgba(255,255,255,.12);
+  backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;gap:10px;
+}
+html[data-theme="light"] .taskbar{background:rgba(255,255,255,.6);border-color:rgba(0,0,0,.08)}
+.taskbar i{width:9px;height:9px;border-radius:3px;background:rgba(255,255,255,.4)}
+html[data-theme="light"] .taskbar i{background:rgba(0,0,0,.28)}
+
+/* ================= 岛容器（形变动画） ================= */
+.island-wrap{margin-top:30px;zoom:var(--zoom)}
+.island{
+  position:relative;border-radius:26px;overflow:hidden;color:var(--fg);
+  background:var(--body);
+  box-shadow:var(--shadow),0 0 0 1px rgba(255,255,255,.06);
+  transition:width .5s cubic-bezier(.3,.9,.3,1),height .5s cubic-bezier(.3,.9,.3,1),border-radius .4s;
+}
+html[data-theme="light"] .island{box-shadow:var(--shadow),0 0 0 1px rgba(0,0,0,.07)}
+.screen{position:absolute;inset:0;display:none}
+.screen.on{display:block;animation:scrIn .38s ease}
+@keyframes scrIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+
+/* ================= 注释 ================= */
+.notes{
+  flex:none;margin:10px 20px 14px 4px;max-height:108px;overflow:auto;
+  font-size:12px;line-height:1.7;color:#aeb4bc;
+  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;padding:10px 15px;
+}
+.notes b{color:#e8eaed}.notes .k{color:#8fdcff}
+
+/* ================= 图标 ================= */
+.ic{width:1em;height:1em;display:inline-block;vertical-align:-.12em;fill:none;
+  stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ic.fill{fill:currentColor;stroke:none}
+
+/* ================= 通用控件 ================= */
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;
+  border-radius:99px;background:var(--card);border:1px solid var(--card-bd);
+  font-size:11px;color:var(--fg);cursor:pointer;white-space:nowrap}
+.chip:hover{background:var(--card-hi)}
+.tgl{width:38px;height:21px;border-radius:99px;background:var(--track);position:relative;cursor:pointer;transition:.2s;flex:none}
+.tgl::after{content:"";position:absolute;top:2.5px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.tgl.on{background:var(--accent)}
+.tgl.on::after{left:19px}
+.seg{display:inline-flex;background:var(--card);border:1px solid var(--card-bd);border-radius:10px;padding:3px;gap:2px}
+.seg button{font:inherit;font-size:11px;color:var(--sub);background:transparent;border:none;
+  border-radius:7px;padding:4px 10px;cursor:pointer;white-space:nowrap}
+.seg button.on{background:var(--segc,var(--accent));color:var(--body);font-weight:600}
+.card{background:var(--card);border:1px solid var(--card-bd);border-radius:14px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+html[data-theme="light"] .card{box-shadow:inset 0 1px 0 rgba(255,255,255,.75)}
+
+/* ================= 紧凑态（52 高胶囊） ================= */
+.compact{display:flex;align-items:center;height:100%;padding:0 14px;gap:10px}
+.c-clock{justify-content:center;gap:12px}
+.c-clock .tm{font-size:25px;font-weight:600;letter-spacing:.5px;font-variant-numeric:tabular-nums}
+.c-clock .dt{font-size:10px;color:var(--dim);line-height:1.35;text-align:left}
+.c-media .cov{width:36px;height:36px;border-radius:9px;overflow:hidden;flex:none;box-shadow:0 3px 10px rgba(0,0,0,.4)}
+.c-media .cov img{width:100%;height:100%;object-fit:cover}
+.c-media .tt{flex:1;min-width:0}
+.c-media .t1{font-size:12.5px;font-weight:600;overflow:hidden;white-space:nowrap;
+  -webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 12px),transparent);
+  mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 12px),transparent)}
+.c-media .t1 span{display:inline-block;animation:mq 8s linear infinite alternate}
+.c-media .t2{font-size:10px;color:var(--sub);margin-top:1px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+@keyframes mq{from{transform:translateX(0)}to{transform:translateX(-58%)}}
+.spectrum{display:flex;align-items:flex-end;gap:2.5px;height:22px;flex:none}
+.spectrum i{width:3.5px;border-radius:2px;background:linear-gradient(180deg,var(--accent),#3b82f6);transition:height .09s ease-out;height:20%}
+.c-toast{gap:11px}
+.c-toast .appic{width:30px;height:30px;border-radius:8px;flex:none;display:grid;place-items:center;
+  font-size:13px;font-weight:700;color:#fff;background:linear-gradient(135deg,#4ad97a,#1a9e4b)}
+.c-toast .tt{flex:1;min-width:0}
+.c-toast .t1{font-size:12px;font-weight:600}
+.c-toast .t2{font-size:10.5px;color:var(--sub);margin-top:1px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.c-toast .x{font-size:12px;color:var(--dim);cursor:pointer;flex:none}
+.c-comp{gap:13px;justify-content:center}
+.c-comp .sep{width:1px;height:24px;background:var(--track);flex:none}
+.c-comp .slot{display:flex;align-items:center;gap:7px}
+.c-comp .ctm{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.c-comp .hw{display:flex;flex-direction:column;gap:3px}
+.c-comp .hwr{display:flex;align-items:center;gap:5px;font-size:9.5px;color:var(--sub);font-variant-numeric:tabular-nums}
+.c-comp .hwr b{color:var(--fg);font-weight:600;width:30px;text-align:right}
+.c-comp .hbar{width:40px;height:3px;border-radius:2px;background:var(--track);overflow:hidden}
+.c-comp .hbar i{display:block;height:100%;border-radius:2px;background:var(--accent)}
+.c-comp .cov{width:30px;height:30px;border-radius:8px;overflow:hidden;flex:none}
+.c-comp .cov img{width:100%;height:100%;object-fit:cover}
+.c-comp .mt{max-width:86px}
+.c-comp .t1{font-size:11px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.c-comp .t2{font-size:9px;color:var(--dim);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+
+/* ================= 展开面板框架 ================= */
+.exp{display:flex;flex-direction:column;height:100%;padding:14px 18px 12px;position:relative}
+.exp .tabs{display:flex;gap:4px;flex:none;position:relative;padding-bottom:9px}
+.exp .tabs::after{content:"";position:absolute;left:2px;right:2px;bottom:0;height:1px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--tabc,var(--accent)) 42%,transparent),transparent 72%)}
+.exp .tabs .tab{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--dim);
+  padding:5px 10px;border-radius:8px;cursor:pointer;transition:.15s}
+.exp .tabs .tab:hover{color:var(--sub)}
+.exp .tabs .tab.on{color:var(--tabc,var(--accent));background:color-mix(in srgb,var(--tabc,var(--accent)) 13%,transparent);font-weight:600}
+.exp .body{flex:1;min-height:0;margin-top:11px;position:relative;overflow:hidden}
+.exp .body::before{content:"";position:absolute;left:-20px;right:-20px;top:-30px;height:140px;pointer-events:none;
+  background:radial-gradient(420px 140px at 26% 0,color-mix(in srgb,var(--tabc,var(--accent)) 12%,transparent),transparent 70%)}
+.exp .hint{flex:none;margin-top:6px;font-size:10px;color:var(--dim)}
+.exp .x{position:absolute;top:10px;right:12px;font-size:12px;color:var(--dim);cursor:pointer;z-index:5}
+
+/* ---- 计划页 ---- */
+.p-head{display:flex;align-items:center;gap:9px}
+.p-head .t{font-size:15px;font-weight:650}
+.p-head .st{font-size:10.5px;color:var(--ok);display:flex;align-items:center;gap:5px}
+.p-head .st::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.p-head .tgl{margin-left:auto}
+.p-grid{display:grid;grid-template-columns:150px 1fr;gap:9px;margin-top:10px}
+.p-time{padding:12px 14px;display:flex;flex-direction:column;justify-content:center;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--ac-plan) 13%,transparent),var(--card) 65%)}
+.p-time .v{font-size:30px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:1px}
+.p-time .l{font-size:10px;color:var(--dim);margin-top:2px}
+.p-act{padding:10px 12px;display:flex;flex-direction:column;gap:8px;justify-content:center}
+.p-act .l{font-size:10px;color:var(--dim)}
+.p-act .seg{align-self:flex-start}
+.p-act .sub{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--sub)}
+.p-rep{margin-top:9px;padding:10px 12px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.p-rep .l{font-size:10px;color:var(--dim);width:30px}
+.p-rep .wd{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+  font-size:11px;color:var(--sub);background:var(--card);border:1px solid var(--card-bd);cursor:pointer}
+.p-rep .wd.on{background:color-mix(in srgb,var(--ac-plan) 18%,transparent);
+  border-color:var(--ac-plan);color:var(--ac-plan);font-weight:600}
+.p-rep .add{height:26px;border-radius:8px;border:1px dashed var(--track);display:flex;align-items:center;
+  padding:0 9px;font-size:10.5px;color:var(--dim);cursor:pointer}
+.p-next{margin-top:9px;height:34px;border-radius:11px;display:flex;align-items:center;gap:8px;padding:0 13px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--ac-plan) 22%,transparent),transparent 75%);
+  border:1px solid color-mix(in srgb,var(--ac-plan) 32%,transparent);font-size:11.5px}
+.p-next b{font-weight:650;font-variant-numeric:tabular-nums}
+.p-next .zap{color:var(--ac-plan)}
+
+/* ---- 性能页 ---- */
+.perf{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr auto;gap:10px;height:100%}
+.perf .ring{padding:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px}
+.perf .rg{position:relative;width:76px;height:76px}
+.perf .rg svg{transform:rotate(-90deg)}
+.perf .rg .val{position:absolute;inset:0;display:grid;place-items:center;font-size:20px;font-weight:650;font-variant-numeric:tabular-nums}
+.perf .rg .val small{font-size:9px;color:var(--dim);font-weight:400;margin-left:1px}
+.perf .rl{font-size:10.5px;color:var(--sub);margin-top:2px}
+.perf .row{grid-column:1/3;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.perf .mini{padding:9px 12px;display:flex;flex-direction:column;justify-content:center;gap:4px}
+.perf .mini .k{font-size:9.5px;color:var(--dim);display:flex;align-items:center;gap:4px}
+.perf .mini .v{font-size:13.5px;font-weight:650;font-variant-numeric:tabular-nums}
+.perf .mini .v small{font-size:9.5px;color:var(--sub);font-weight:400}
+
+/* ---- 天气页 ---- */
+.wea{display:grid;grid-template-columns:1.1fr 1fr;gap:10px;height:calc(100% - 4px)}
+.wea .now{padding:14px;display:flex;flex-direction:column;justify-content:center;position:relative;overflow:hidden;
+  background:linear-gradient(155deg,color-mix(in srgb,var(--ac-weather) 15%,transparent),var(--card) 62%)}
+.wea .now .city{font-size:11px;color:var(--sub);display:flex;align-items:center;gap:4px}
+.wea .now .tmp{font-size:42px;font-weight:250;line-height:1.1;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+.wea .now .tmp small{font-size:20px;font-weight:300}
+.wea .now .cond{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:6px}
+.wea .now .cond .w{font-size:19px;color:var(--ac-weather)}
+.wea .now .upd{position:absolute;right:12px;top:10px;font-size:9.5px;color:var(--dim)}
+.wea .r{display:flex;flex-direction:column;gap:10px}
+.wea .hours{flex:1;padding:10px 12px;display:flex;justify-content:space-between}
+.wea .h{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:9.5px;color:var(--dim)}
+.wea .h .w{font-size:15px;color:var(--ac-weather)}
+.wea .h .t{font-size:11px;color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+.wea .meta{display:flex;gap:7px}
+.wea .m{flex:1;padding:8px 0;text-align:center;font-size:10px;color:var(--sub)}
+.wea .m b{display:block;font-size:12.5px;color:var(--fg);margin-top:2px;font-weight:650}
+
+/* ---- 事项页 ---- */
+.tasks{display:flex;flex-direction:column;gap:7px;height:100%}
+.tasks .t{display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer}
+.tasks .t .done{width:16px;height:16px;border-radius:50%;border:1.6px solid var(--track);flex:none;
+  display:grid;place-items:center;font-size:9px;color:transparent;transition:.15s}
+.tasks .t.did .done{background:var(--ac-tasks);border-color:var(--ac-tasks);color:#fff}
+.tasks .t.did .nm{text-decoration:line-through;color:var(--dim)}
+.tasks .t .nm{font-size:12.5px;font-weight:550;flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tasks .t .cat{font-size:9.5px;color:var(--sub);background:var(--card);border:1px solid var(--card-bd);
+  border-radius:6px;padding:2px 7px;white-space:nowrap}
+.tasks .t .tm{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+.tasks .t .cdot{width:8px;height:8px;border-radius:3px;flex:none}
+.tasks .add{border:1px dashed var(--track);border-radius:12px;height:34px;display:flex;align-items:center;
+  justify-content:center;gap:6px;font-size:11.5px;color:var(--dim);cursor:pointer}
+.tasks .add:hover{color:var(--sub);border-color:var(--dim)}
+
+/* ---- 月份页 ---- */
+.cal{height:100%;display:flex;flex-direction:column}
+.cal .hd{display:flex;align-items:center;padding:2px 4px 8px}
+.cal .hd .t{font-size:14px;font-weight:650}
+.cal .hd .t small{font-size:10.5px;color:var(--dim);font-weight:400;margin-left:6px}
+.cal .hd .n{margin-left:auto;display:flex;gap:5px}
+.cal .hd .n button{width:24px;height:24px;border-radius:8px;background:var(--card);border:1px solid var(--card-bd);
+  color:var(--sub);cursor:pointer;font-size:11px;display:grid;place-items:center}
+.cal .grid{flex:1;display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.cal .wd,.cal .dy{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
+.cal .wd{font-size:9.5px;color:var(--dim);padding-bottom:2px}
+.cal .dy{font-size:11.5px;color:var(--fg);border-radius:8px;cursor:pointer;font-variant-numeric:tabular-nums;padding:3px 0}
+.cal .dy:hover{background:var(--card)}
+.cal .dy.out{color:color-mix(in srgb,var(--dim) 45%,transparent)}
+.cal .dy.today{background:var(--ac-month);color:#201500;font-weight:700}
+.cal .dy.plan::after{content:"";width:4px;height:4px;border-radius:50%;background:var(--ac-plan)}
+.cal .ft{padding:7px 4px 0;font-size:10.5px;color:var(--sub);display:flex;align-items:center;gap:6px}
+.cal .ft::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ac-plan)}
+
+/* ---- 快捷页 ---- */
+.quick{height:100%;display:flex;flex-direction:column}
+.quick .tip{font-size:10.5px;color:var(--dim);text-align:center;margin-bottom:8px}
+.quick .tip b{color:var(--ac-quick);font-weight:600}
+.quick .grid{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.qa{position:relative;border-radius:16px;background:var(--card);border:1px solid var(--card-bd);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;overflow:hidden}
+.qa:hover{background:var(--card-hi)}
+.qa .ball{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-size:16px;
+  background:var(--bc,var(--accent));color:#fff;box-shadow:0 4px 12px color-mix(in srgb,var(--bc,var(--accent)) 40%,transparent)}
+.qa .lb{font-size:10.5px;color:var(--sub)}
+.qa.dgr .ball{background:linear-gradient(145deg,color-mix(in srgb,var(--bc) 85%,#fff 0%),var(--bc))}
+.qa.dgr::before{content:"";position:absolute;inset:0;border-radius:16px;border:1.5px solid color-mix(in srgb,var(--bc) 55%,transparent);pointer-events:none}
+.qa .arc{position:absolute;left:50%;top:calc(50% - 27px);width:34px;height:34px;margin-left:-17px;border-radius:50%;
+  pointer-events:none;display:none}
+.qa.holding .arc{display:block}
+.qa .lb-hold{position:absolute;bottom:4px;font-size:8.5px;color:var(--dim)}
+.quick .done-toast{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);background:var(--glass);
+  border:1px solid var(--glass-bd);backdrop-filter:blur(8px);border-radius:99px;padding:5px 14px;
+  font-size:11px;color:var(--fg);display:none;z-index:9}
+.quick .done-toast.show{display:block;animation:scrIn .25s ease}
+/* 自定义程序编辑器（实机为 WPF 小窗 / 写 quick_custom 配置） */
+.qedit{position:absolute;inset:0;background:var(--body);z-index:12;display:none;flex-direction:column;gap:9px;
+  padding:14px 16px;border-radius:16px}
+.qedit.show{display:flex;animation:scrIn .22s ease}
+.qedit .qe-t{font-size:13.5px;font-weight:650}
+.qedit input{font:inherit;font-size:12px;color:var(--fg);background:var(--card);border:1px solid var(--card-bd);
+  border-radius:9px;padding:8px 11px;outline:none}
+.qedit input:focus{border-color:var(--ac-quick)}
+.qedit input::placeholder{color:var(--dim)}
+.qedit .qe-row{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--sub)}
+.qedit .swatches{display:flex;gap:7px}
+.qedit .sw{width:21px;height:21px;border-radius:50%;cursor:pointer;border:2px solid transparent}
+.qedit .sw.on{border-color:var(--fg)}
+.qedit .qe-btns{display:flex;gap:9px;margin-top:auto;justify-content:flex-end}
+.qedit .qe-btns button{font:inherit;font-size:11.5px;height:29px;padding:0 15px;border-radius:9px;cursor:pointer;font-family:inherit}
+.qedit .qe-btns .c{background:var(--card);border:1px solid var(--card-bd);color:var(--fg)}
+.qedit .qe-btns .s{background:var(--ac-quick);border:none;color:#fff;font-weight:600}
+
+/* ---- 媒体页 ---- */
+.med{height:100%;position:relative}
+.med .cov{position:absolute;left:20px;top:18px;width:84px;height:84px;border-radius:16px;overflow:hidden;
+  box-shadow:0 10px 26px rgba(0,0,0,.5)}
+.med .cov img{width:100%;height:100%;object-fit:cover}
+.med .meta{position:absolute;left:118px;top:22px;right:20px}
+.med .t1{font-size:17px;font-weight:650}
+.med .t2{margin-top:4px;font-size:12px;color:var(--sub);display:flex;align-items:center;gap:6px}
+.med .appdot{width:12px;height:12px;border-radius:50%;background:linear-gradient(135deg,#35d0c8,#0a84ff)}
+.med .src{margin-top:8px}
+.med .seek{position:absolute;left:24px;right:24px;top:142px;height:14px;display:flex;align-items:center;cursor:pointer}
+.med .seek .rail{position:relative;height:4px;width:100%;border-radius:99px;background:var(--track)}
+.med .seek .fill{position:absolute;left:0;top:0;bottom:0;border-radius:99px;
+  background:linear-gradient(90deg,var(--ac-media),#fff)}
+html[data-theme="light"] .med .seek .fill{background:linear-gradient(90deg,var(--ac-media),#4aa3ff)}
+.med .times{position:absolute;left:24px;right:24px;top:158px;display:flex;justify-content:space-between;
+  font-size:10.5px;color:var(--sub);font-variant-numeric:tabular-nums}
+.med .lyr{position:absolute;left:0;right:0;top:186px;text-align:center;font-size:14.5px;font-weight:600}
+.med .lyr .lit{color:var(--ac-media)}
+.med .lyr .base{color:var(--dim)}
+.med .lyr2{position:absolute;left:0;right:0;top:212px;text-align:center;font-size:11.5px;color:var(--dim)}
+.med .home{position:absolute;left:20px;bottom:20px}
+.med .tr{position:absolute;left:0;right:120px;bottom:20px;display:flex;align-items:center;justify-content:center;gap:16px}
+.med .tb{border:none;background:transparent;color:var(--fg);cursor:pointer;display:grid;place-items:center;font-size:16px}
+.med .tb.main{width:46px;height:46px;border-radius:50%;background:#fff;color:#0b0b0d;
+  box-shadow:0 6px 18px rgba(0,0,0,.45);font-size:17px}
+html[data-theme="light"] .med .tb.main{background:#18181a;color:#fff}
+.med .vol{position:absolute;right:20px;bottom:29px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub)}
+.med .vrail{width:80px;height:4px;border-radius:99px;background:var(--track);position:relative;cursor:pointer}
+.med .vrail i{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:var(--ac-media)}
+
+/* ---- Alert ---- */
+.alert{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;position:relative;overflow:hidden}
+.alert::before{content:"";position:absolute;inset:0;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--danger) 26%,transparent),transparent 55%);pointer-events:none}
+.alert .badge{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650;color:var(--danger);z-index:1}
+.alert .badge::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--danger);animation:blink 1s ease infinite}
+@keyframes blink{50%{opacity:.25}}
+.alert .cd{font-size:44px;font-weight:700;letter-spacing:2px;font-variant-numeric:tabular-nums;z-index:1}
+.alert .sub{font-size:11px;color:var(--sub);z-index:1}
+.alert .btns{display:flex;gap:10px;margin-top:12px;z-index:1}
+.alert .b1{height:32px;padding:0 18px;border-radius:99px;border:1px solid var(--track);background:var(--card);
+  color:var(--fg);font-size:12px;cursor:pointer;font-family:inherit}
+.alert .b1:hover{background:var(--card-hi)}
+.alert .b2{height:32px;padding:0 18px;border-radius:99px;border:none;background:var(--danger);
+  color:#fff;font-size:12px;cursor:pointer;font-family:inherit;font-weight:600}
+.alert .cancelled{font-size:13px;color:var(--ok);font-weight:650;display:none;z-index:1}
+.alert.off .cd,.alert.off .badge,.alert.off .btns,.alert.off .sub{display:none}
+.alert.off .cancelled{display:block}
+
+/* ---- 退出确认 ---- */
+.confirm{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;position:relative}
+.confirm .ring{position:absolute;top:12px;right:14px;width:26px;height:26px}
+.confirm .t{font-size:16.5px;font-weight:650}
+.confirm .s{font-size:11.5px;color:var(--sub)}
+.confirm .btns{display:flex;gap:11px;margin-top:13px}
+.confirm button{height:33px;padding:0 22px;border-radius:99px;font-size:12.5px;cursor:pointer;font-family:inherit}
+.confirm .no{background:var(--card);border:1px solid var(--card-bd);color:var(--fg)}
+.confirm .no:hover{background:var(--card-hi)}
+.confirm .yes{background:var(--danger);border:none;color:#fff;font-weight:600}
+
+/* ---- 设置窗口 ---- */
+.setwin{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:400px;
+  border-radius:14px;background:var(--body);border:1px solid var(--card-bd);
+  box-shadow:0 30px 80px rgba(0,0,0,.5);color:var(--fg);padding:14px 0 12px;overflow:hidden}
+.setwin .hd{display:flex;align-items:center;padding:0 16px 10px;border-bottom:1px solid var(--card-bd)}
+.setwin .hd .t{font-size:14px;font-weight:650}
+.setwin .bd{padding:6px 16px 0;max-height:300px;overflow:auto}
+.setwin .sec{font-size:10px;color:var(--dim);margin:10px 0 4px}
+.setwin .row{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px}
+.setwin .row .lb{width:70px;color:var(--sub);flex:none}
+.setwin .slider{flex:1;height:4px;border-radius:2px;background:var(--track);position:relative}
+.setwin .slider i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent)}
+.setwin .slider b{position:absolute;top:50%;width:13px;height:13px;border-radius:50%;background:#fff;
+  transform:translate(-50%,-50%);box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.setwin .ft{display:flex;align-items:center;gap:9px;padding:11px 16px 0}
+.setwin .ft .v{font-size:10px;color:var(--dim);flex:1}
+.setwin .ft button{height:29px;padding:0 15px;border-radius:9px;font-size:11.5px;cursor:pointer;font-family:inherit}
+.setwin .ft .rst{background:var(--card);border:1px solid var(--card-bd);color:var(--fg)}
+.setwin .ft .ok{background:var(--accent);border:none;color:#04222f;font-weight:600}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a.6.6 0 0 0 .9.5l10.4-6.5a.6.6 0 0 0 0-1L8.9 5a.6.6 0 0 0-.9.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.4"/><rect x="13.5" y="5" width="4" height="14" rx="1.4"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><rect x="5" y="5.5" width="2.4" height="13" rx="1.2"/><path d="M19 6.6v10.8a.6.6 0 0 1-.93.5l-8-5.4a.6.6 0 0 1 0-1l8-5.4a.6.6 0 0 1 .93.5z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><rect x="16.6" y="5.5" width="2.4" height="13" rx="1.2"/><path d="M5 6.6v10.8a.6.6 0 0 0 .93.5l8-5.4a.6.6 0 0 0 0-1l-8-5.4A.6.6 0 0 0 5 6.6z"/></symbol>
+  <symbol id="i-vol" viewBox="0 0 24 24"><path d="M4 9.5v5a1 1 0 0 0 1 1h2.6l3.9 3.2a.7.7 0 0 0 1.15-.54V5.84A.7.7 0 0 0 11.5 5.3L7.6 8.5H5a1 1 0 0 0-1 1z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M17.8 6.8a7.2 7.2 0 0 1 0 10.4"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4.5 10.6 12 4.4l7.5 6.2v7.4a1.5 1.5 0 0 1-1.5 1.5h-3.4v-5.2a1 1 0 0 0-1-1h-3.2a1 1 0 0 0-1 1v5.2H6a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></symbol>
+  <symbol id="i-cloudsun" viewBox="0 0 24 24"><circle cx="8" cy="8" r="3.2"/><path d="M8 2.5v1.4M2.5 8h1.4M4.2 4.2l1 1M12 4.2l-1 1"/><path d="M10 20h7.2a3 3 0 0 0 .4-6 4.6 4.6 0 0 0-8.9-1.2A3.4 3.4 0 0 0 10 20z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c-4.7 4.9-4.7 12.1 0 17M12 3.5c4.7 4.9 4.7 12.1 0 17"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 9.5l3.2 3L7 15.5M12.5 15.5H17"/></symbol>
+  <symbol id="i-yt" viewBox="0 0 24 24"><rect x="2.8" y="6" width="18.4" height="12.5" rx="3.5"/><path d="M10.2 9.7v5.1l4.6-2.55z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 13.6A8 8 0 0 1 10.4 4 8 8 0 1 0 20 13.6z"/></symbol>
+  <symbol id="i-restart" viewBox="0 0 24 24"><path d="M4.6 9A8 8 0 1 1 4 13"/><path d="M4.5 4.5v4.8h4.8"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5V11"/><path d="M7.2 6.2a7 7 0 1 0 9.6 0"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 3 5 13.5h6L11 21l8-10.5h-6z"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.4-6.5-10.2a6.5 6.5 0 0 1 13 0C18.5 15.6 12 21 12 21z"/><circle cx="12" cy="10.6" r="2.3"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 2.5v4M14.5 2.5v4M9.5 17.5v4M14.5 17.5v4M2.5 9.5h4M2.5 14.5h4M17.5 9.5h4M17.5 14.5h4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+</svg>
+
+<header class="bar">
+  <div>
+    <h1>灵云 · 全页面 UI 重设计</h1>
+    <div class="sub">统一设计语言：纯黑玻璃 · 页面专属强调色 · 尺寸与实机一致（胶囊 240/300×52 · 展开 460×320）</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="ctl">
+    <span class="lbl">主题</span>
+    <button id="bDark" class="on">深色</button>
+    <button id="bLight">浅色</button>
+  </div>
+  <div class="ctl">
+    <span class="lbl">壁纸</span>
+    <button id="bWall" class="on">图片</button>
+    <button id="bGrad">渐变</button>
+  </div>
+  <div class="ctl">
+    <span class="lbl">缩放</span>
+    <button data-z="1">100%</button>
+    <button data-z="1.15" class="on">115%</button>
+    <button data-z="1.45">145%</button>
+  </div>
+</header>
+
+<main>
+  <nav class="side" id="side"></nav>
+  <div class="stage">
+    <div class="desktop" id="desktop">
+      <div class="island-wrap"><div class="island" id="island">
+
+        <!-- 紧凑：时钟 -->
+        <div class="screen" data-name="c-clock">
+          <div class="compact c-clock">
+            <div class="tm" id="liveClock">23:46</div>
+            <div class="dt">9月13日<br>周六</div>
+          </div>
+        </div>
+
+        <!-- 紧凑：媒体 -->
+        <div class="screen" data-name="c-media">
+          <div class="compact c-media">
+            <div class="cov"><img src="assets/cover-night.jpg" alt=""></div>
+            <div class="tt">
+              <div class="t1"><span>アイドル（Idol）- YOASOBI · 2023</span></div>
+              <div class="t2">Edge 浏览器 · 正在播放</div>
+            </div>
+            <div class="spectrum" id="spectrum"><i></i><i></i><i></i><i></i><i></i></div>
+          </div>
+        </div>
+
+        <!-- 紧凑：通知 -->
+        <div class="screen" data-name="c-toast">
+          <div class="compact c-toast">
+            <div class="appic">微</div>
+            <div class="tt">
+              <div class="t1">张三</div>
+              <div class="t2">在吗？帮我看看那份方案，急用谢谢</div>
+            </div>
+            <div class="x">✕</div>
+          </div>
+        </div>
+
+        <!-- 紧凑：组合模式 -->
+        <div class="screen" data-name="c-comp">
+          <div class="compact c-comp">
+            <div class="slot"><div class="ctm" id="compClock">23:46</div></div>
+            <div class="sep"></div>
+            <div class="slot">
+              <div class="hw">
+                <div class="hwr">CPU<b>37%</b><span class="hbar"><i style="width:37%"></i></span></div>
+                <div class="hwr">内存<b>62%</b><span class="hbar"><i style="width:62%;background:var(--ac-perf)"></i></span></div>
+              </div>
+            </div>
+            <div class="sep"></div>
+            <div class="slot">
+              <div class="cov"><img src="assets/cover-night.jpg" alt=""></div>
+              <div class="mt">
+                <div class="t1">アイドル</div>
+                <div class="t2">YOASOBI</div>
+              </div>
+              <div class="spectrum" id="spectrum2" style="height:16px"><i style="width:3px"></i><i style="width:3px"></i><i style="width:3px"></i><i style="width:3px"></i><i style="width:3px"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 展开框架（6 页 + 媒体共用） -->
+        <div class="screen" data-name="e-plan" data-tab="0"><div class="exp"></div></div>
+        <div class="screen" data-name="e-perf" data-tab="1"><div class="exp"></div></div>
+        <div class="screen" data-name="e-weather" data-tab="2"><div class="exp"></div></div>
+        <div class="screen" data-name="e-tasks" data-tab="3"><div class="exp"></div></div>
+        <div class="screen" data-name="e-month" data-tab="4"><div class="exp"></div></div>
+        <div class="screen" data-name="e-quick" data-tab="5"><div class="exp"></div></div>
+
+        <!-- 媒体页（沿用已确认的精修版，强调色跟随封面） -->
+        <div class="screen" data-name="e-media">
+          <div class="med">
+            <div class="x" style="position:absolute;top:10px;right:14px;font-size:12px;color:var(--dim);cursor:pointer">✕</div>
+            <div class="cov"><img src="assets/cover-night.jpg" alt=""></div>
+            <div class="meta">
+              <div class="t1">アイドル（Idol）</div>
+              <div class="t2"><span class="appdot"></span>YOASOBI · Edge 浏览器</div>
+              <button class="chip src" style="--accent:var(--ac-media)"><span class="arr" style="color:var(--sub)">‹</span>&nbsp;来源 1/3&nbsp;<span class="arr" style="color:var(--sub)">›</span></button>
+            </div>
+            <div class="seek"><div class="rail"><div class="fill" style="width:33%"></div></div></div>
+            <div class="times"><span>1:10</span><span>-02:20</span></div>
+            <div class="lyr"><span class="base">我面无表情</span><span class="lit"> 看孤独的风景</span></div>
+            <div class="lyr2">失去你 爱恨开始分明</div>
+            <button class="chip home" style="--accent:var(--ac-media)"><svg class="ic"><use href="#i-home"/></svg>&nbsp;面板</button>
+            <div class="tr">
+              <button class="tb"><svg class="ic fill"><use href="#i-prev"/></svg></button>
+              <button class="tb main"><svg class="ic fill"><use href="#i-pause"/></svg></button>
+              <button class="tb"><svg class="ic fill"><use href="#i-next"/></svg></button>
+            </div>
+            <div class="vol">
+              <svg class="ic"><use href="#i-vol"/></svg>
+              <div class="vrail"><i style="width:40%"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alert -->
+        <div class="screen" data-name="o-alert">
+          <div class="alert" id="alertBox">
+            <div class="badge">即将关机</div>
+            <div class="cd" id="alertCd">00:14:59</div>
+            <div class="sub">定时计划 · 每天 23:00 · 最后 10 秒将蜂鸣</div>
+            <div class="btns">
+              <button class="b1" id="alertCancel">取消本次</button>
+              <button class="b2" id="alertNow">立即执行</button>
+            </div>
+            <div class="cancelled">✓ 已取消本次计划（演示自动复位）</div>
+          </div>
+        </div>
+
+        <!-- 退出确认 -->
+        <div class="screen" data-name="o-confirm">
+          <div class="confirm">
+            <svg class="ring" viewBox="0 0 26 26" id="confirmRing">
+              <circle cx="13" cy="13" r="10.5" fill="none" stroke="var(--track)" stroke-width="2.4"/>
+              <circle cx="13" cy="13" r="10.5" fill="none" stroke="var(--danger)" stroke-width="2.4"
+                stroke-linecap="round" stroke-dasharray="66" stroke-dashoffset="0" transform="rotate(-90 13 13)" id="confirmArc"/>
+            </svg>
+            <div class="t">退出灵云？</div>
+            <div class="s">岛将从桌面收起，定时计划也会停止</div>
+            <div class="btns">
+              <button class="no">取消</button>
+              <button class="yes">退出</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 设置窗口 -->
+        <div class="screen" data-name="w-settings">
+          <div class="setwin">
+            <div class="hd"><div class="t">岛设置</div></div>
+            <div class="bd">
+              <div class="sec">外观</div>
+              <div class="row"><span class="lb">主题</span>
+                <div class="seg" style="--segc:var(--accent)"><button class="on">深色</button><button>浅色</button><button>跟随系统</button></div>
+              </div>
+              <div class="row"><span class="lb">媒体页</span>
+                <div class="seg" style="--segc:var(--accent)"><button class="on">A 精修</button><button>B 沉浸</button><button>C 氛围</button></div>
+              </div>
+              <div class="row"><span class="lb">不透明</span>
+                <div class="slider"><i style="width:100%"></i><b style="left:100%"></b></div>
+                <span style="font-size:10.5px;color:var(--sub);width:34px">100%</span>
+              </div>
+              <div class="sec">位置与大小</div>
+              <div class="row"><span class="lb">胶囊大小</span>
+                <div class="slider"><i style="width:50%"></i><b style="left:50%"></b></div>
+                <span style="font-size:10.5px;color:var(--sub);width:34px">100%</span>
+              </div>
+              <div class="row"><span class="lb">距顶部</span>
+                <div class="slider"><i style="width:4%"></i><b style="left:4%"></b></div>
+                <span style="font-size:10.5px;color:var(--sub);width:34px">8px</span>
+              </div>
+              <div class="sec">显示内容</div>
+              <div class="row"><span class="lb">组合模式</span><div class="tgl on" style="--accent:var(--accent)"></div></div>
+              <div class="row"><span class="lb">系统通知</span><div class="tgl on"></div></div>
+              <div class="row"><span class="lb">闲置隐藏</span><div class="tgl"></div></div>
+              <div class="sec">歌词</div>
+              <div class="row"><span class="lb">卡拉OK</span><div class="tgl on"></div></div>
+              <div class="row"><span class="lb">延迟补偿</span>
+                <div class="slider"><i style="width:50%"></i><b style="left:50%"></b></div>
+                <span style="font-size:10.5px;color:var(--sub);width:34px">0s</span>
+              </div>
+            </div>
+            <div class="ft">
+              <span class="v">灵云 v5.1（本地）</span>
+              <button class="rst">恢复默认</button>
+              <button class="ok">完成</button>
+            </div>
+          </div>
+        </div>
+
+      </div></div>
+      <div class="taskbar"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div class="notes" id="notes"></div>
+  </div>
+</main>
+
+<script>
+/* ================= 屏幕注册表 ================= */
+const TABS = [
+  {id:"e-plan",   name:"计划", icon:"i-clock",    ac:"var(--ac-plan)"},
+  {id:"e-perf",   name:"性能", icon:"i-pulse",    ac:"var(--ac-perf)"},
+  {id:"e-weather",name:"天气", icon:"i-cloudsun", ac:"var(--ac-weather)"},
+  {id:"e-tasks",  name:"日程", icon:"i-list",     ac:"var(--ac-tasks)"},
+  {id:"e-month",  name:"日历", icon:"i-cal",      ac:"var(--ac-month)"},
+  {id:"e-quick",  name:"快捷", icon:"i-grid",     ac:"var(--ac-quick)"},
+];
+const SCREENS = [
+  {grp:"紧凑态", id:"c-clock", name:"时钟胶囊", w:240, h:52,
+   note:"时钟胶囊：时间 <b>25px 半粗 + 左侧双行日期</b>（对比现版信息更足但不添乱）。有计划时右侧时间位换成 <b>倒计时</b>（88:88 定宽防抖）。<span class='k'>Skia：</span>纯文本排版，直接可落地。"},
+  {grp:"紧凑态", id:"c-media", name:"媒体胶囊", w:300, h:52,
+   note:"媒体胶囊：封面 36px 圆角 + 标题<b>跑马灯</b> + 来源行，右侧 <b>5 频段实时频谱</b>（WASAPI 驱动，快起慢落）。<span class='k'>Skia：</span>频谱现成，标题行加 2px 即可。"},
+  {grp:"紧凑态", id:"c-toast", name:"通知胶囊", w:340, h:52,
+   note:"通知胶囊：应用图标块（取应用主色渐变）+ <b>标题粗体 / 正文单行</b>，6 秒自动收起，点击唤醒应用。宽度按文本自适应 260–620。<span class='k'>Skia：</span>现有 Toast 管线加图标块。"},
+  {grp:"紧凑态", id:"c-comp", name:"组合模式", w:470, h:52,
+   note:"组合模式：<b>时间 ｜ CPU/内存微型条 ｜ 媒体</b> 三槽，分隔线替代间距，宽度按内容自适应；时间按 88:88、百分比按 100% 定宽防抖。<span class='k'>Skia：</span>现有 Composite 管线重排 + 分隔线。"},
+  {grp:"展开面板", id:"e-plan", name:"① 计划", w:460, h:320,
+   note:"计划页：启用开关挪到标题行；<b>大号时间 + 动作分段选择器</b>双卡；星期七枚小方块 + 日期追加；底部<b>强调色渐变横幅</b>显示下次执行倒计时（每秒走动）。<span class='k'>Skia：</span>全部现成能力。"},
+  {grp:"展开面板", id:"e-perf", name:"② 性能", w:460, h:320,
+   note:"性能页：<b>CPU / 内存双圆环</b>（辉光 + 数值/标签垂直居中）+ 网络/开机小卡（同样居中）。数值 650 字重、等宽数字防跳动。<span class='k'>Skia：</span>DrawArc + 现有 PerfSampler。"},
+  {grp:"展开面板", id:"e-weather", name:"③ 天气", w:460, h:320,
+   note:"天气页：左侧 <b>超大细字重温度</b> + 天气图标 + 城市；右侧逐小时条；底部湿度/风力/空气三小卡。<span class='k'>Skia：</span>图标用内置矢量天气符号（自绘 4-5 枚）。"},
+  {grp:"展开面板", id:"e-tasks", name:"④ 日程", w:460, h:320,
+   note:"日程页：玻璃卡行 + <b>分类色点 / 分类小标签 / 时间右对齐</b>，点击整行勾选完成（划线置灰）；底部虚线「新建日程」。数据沿用 tasks 配置。<span class='k'>Skia：</span>纯排版。"},
+  {grp:"展开面板", id:"e-month", name:"⑤ 日历", w:460, h:320,
+   note:"日历页：<b>周一起始</b>日历网格，今天 = 强调色实心圆，有计划的日期下方<b>蓝色小圆点</b>；底部汇总「已计划 n 天 · 23:00 关机」。<span class='k'>Skia：</span>纯排版 + 圆点。"},
+  {grp:"展开面板", id:"e-quick", name:"⑥ 快捷", w:460, h:320,
+   note:"快捷页：2×3 玻璃方卡，每卡 <b>彩色圆钮 + 标签</b>；危险动作整卡<b>红框预警</b>，<b>按住 0.9 秒</b>圆钮外弧走满才执行；<b>＋ 槽位可添加自定义程序</b>（点「＋」体验编辑器：名称/路径/颜色，右键已添加的卡片可移除；实机存配置 quick_custom）。<span class='k'>Skia：</span>DrawArc 进度弧现成，编辑器走 WPF 设置窗。"},
+  {grp:"展开面板", id:"e-media", name:"⑦ 媒体", w:460, h:320,
+   note:"媒体页：沿用已确认的精修版（84px 封面 / 渐变进度条 / 白圆主控钮 / 卡拉OK歌词），强调色改为<b>跟随封面取色</b>，与整体设计语言对齐。<span class='k'>Skia：</span>已实装，仅换强调色来源。"},
+  {grp:"弹层", id:"o-alert", name:"到点提醒", w:480, h:210,
+   note:"Alert：<b>红色徽标呼吸 + 44px 等宽倒计时</b>，背景红色氛围渐变；「取消本次」玻璃钮 + 「立即执行」实心红钮（危险双确认）；进入最后 10 秒蜂鸣 + 倒计时变红闪。<span class='k'>Skia：</span>纯排版。"},
+  {grp:"弹层", id:"o-confirm", name:"退出确认", w:430, h:168,
+   note:"退出确认：标题 + 一句后果说明；右上角 <b>12 秒自动取消环</b>（SVG 弧 → Skia DrawArc）；「退出」用危险红与快捷页一致。<span class='k'>Skia：</span>DrawArc。"},
+  {grp:"弹层", id:"w-settings", name:"设置窗口", w:460, h:472,
+   note:"设置窗口：与岛同语言（同字号/同强调色/同圆角），分区标题缩小置灰；滑杆统一为 <b>4px 轨道 + 白色拖点</b>；WPF 实装换模板即可。"},
+];
+
+/* ================= 渲染侧栏 ================= */
+const side = document.getElementById("side");
+const screens = {};
+let current = null;
+const shortcuts = ["1","2","3","4","q","w","e","a","s","d","z","x","c","v"];
+SCREENS.forEach((sc, i) => {
+  if (sc.grp && (!SCREENS[i-1] || SCREENS[i-1].grp !== sc.grp)) {
+    const g = document.createElement("div");
+    g.className = "grp"; g.textContent = sc.grp;
+    side.appendChild(g);
+  }
+  const b = document.createElement("button");
+  const acMap = { "e-plan":"--ac-plan","e-perf":"--ac-perf","e-weather":"--ac-weather","e-tasks":"--ac-tasks",
+    "e-month":"--ac-month","e-quick":"--ac-quick","e-media":"--ac-media","o-alert":"--danger","o-confirm":"--danger" };
+  const ac = acMap[sc.id] || "--accent";
+  b.innerHTML = `<span class="dot" style="background:var(${ac})"></span>${sc.name}<span class="k">${shortcuts[i] ?? ""}</span>`;
+  b.onclick = () => show(sc.id);
+  b.dataset.id = sc.id;
+  side.appendChild(b);
+});
+
+const island = document.getElementById("island");
+const notes = document.getElementById("notes");
+function show(id){
+  current = id;
+  const sc = SCREENS.find(s => s.id === id);
+  island.style.width = sc.w + "px";
+  island.style.height = sc.h + "px";
+  island.style.borderRadius = (sc.h <= 60 ? "26px" : "26px");
+  document.querySelectorAll(".screen").forEach(el =>
+    el.classList.toggle("on", el.dataset.name === id));
+  document.querySelectorAll("nav.side button").forEach(el =>
+    el.classList.toggle("on", el.dataset.id === id));
+  notes.innerHTML = sc.note;
+  if (id.startsWith("e-") && id !== "e-media") buildExpanded(id);
+}
+window.show = show;
+
+/* ================= 展开框架（页签 + 各页内容，懒构建一次） ================= */
+const builtPages = new Set();
+function buildExpanded(id){
+  if (builtPages.has(id)) return;
+  builtPages.add(id);
+  const host = document.querySelector(`.screen[data-name="${id}"] .exp`);
+  const tabIdx = +document.querySelector(`.screen[data-name="${id}"]`).dataset.tab;
+  const tab = TABS[tabIdx];
+  host.style.setProperty("--tabc", tab.ac);
+
+  const tabsHtml = TABS.map((t, i) =>
+    `<div class="tab ${i === tabIdx ? "on" : ""}" style="--tabc:${t.ac}" onclick="show('${t.id}')">
+       <svg class="ic"><use href="#${t.icon}"/></svg>${t.name}</div>`).join("");
+  host.innerHTML = `<div class="x">✕</div>
+    <div class="tabs">${tabsHtml}</div>
+    <div class="body" id="body-${id}"></div>
+    <div class="hint">滚轮 / 点击页签切换</div>`;
+  const body = document.getElementById("body-" + id);
+  if (id === "e-plan") body.innerHTML = PLAN_HTML;
+  if (id === "e-perf") body.innerHTML = PERF_HTML;
+  if (id === "e-weather") body.innerHTML = WEATHER_HTML;
+  if (id === "e-tasks") body.innerHTML = TASKS_HTML;
+  if (id === "e-month") body.innerHTML = MONTH_HTML;
+  if (id === "e-quick") body.innerHTML = QUICK_HTML;
+  if (id === "e-plan") startPlanCountdown();
+  if (id === "e-quick") wireQuick();
+}
+
+const PLAN_HTML = `
+  <div class="p-head">
+    <div class="t">定时计划</div><div class="st">已启用</div>
+    <div class="tgl on" onclick="this.classList.toggle('on')"></div>
+  </div>
+  <div class="p-grid">
+    <div class="card p-time"><div class="v">23:00</div><div class="l">执行时刻 · 点击修改</div></div>
+    <div class="card p-act">
+      <div class="l">到点动作</div>
+      <div class="seg" style="--segc:var(--ac-plan)"><button class="on">关机</button><button>锁屏</button><button>息屏</button><button>暂停媒体</button></div>
+      <div class="sub"><div class="tgl on" onclick="this.classList.toggle('on')"></div>到点同时暂停媒体</div>
+    </div>
+  </div>
+  <div class="card p-rep">
+    <div class="l">重复</div>
+    ${["一","二","三","四","五","六","日"].map((d,i)=>`<div class="wd ${[0,2,4].includes(i)?"on":""}" onclick="this.classList.toggle('on')">${d}</div>`).join("")}
+    <div class="add">＋ 指定日期</div>
+  </div>
+  <div class="p-next"><span class="zap"><svg class="ic fill"><use href="#i-zap"/></svg></span>下次执行 <b id="planNext">今晚 23:00 · --</b></div>`;
+
+const PERF_HTML = `
+  <div class="perf">
+    <div class="card ring">
+      <div class="rg"><svg width="76" height="76" viewBox="0 0 76 76" style="filter:drop-shadow(0 0 6px rgba(74,222,128,.5))">
+        <circle cx="38" cy="38" r="32" fill="none" stroke="var(--track)" stroke-width="6"/>
+        <circle cx="38" cy="38" r="32" fill="none" stroke="var(--ac-perf)" stroke-width="6"
+          stroke-linecap="round" stroke-dasharray="201" stroke-dashoffset="126.6" transform="rotate(-90 38 38)"/>
+      </svg><div class="val">37<small>%</small></div></div>
+      <div class="rl">CPU</div>
+    </div>
+    <div class="card ring">
+      <div class="rg"><svg width="76" height="76" viewBox="0 0 76 76" style="filter:drop-shadow(0 0 6px rgba(96,205,255,.5))">
+        <circle cx="38" cy="38" r="32" fill="none" stroke="var(--track)" stroke-width="6"/>
+        <circle cx="38" cy="38" r="32" fill="none" stroke="var(--accent)" stroke-width="6"
+          stroke-linecap="round" stroke-dasharray="201" stroke-dashoffset="76.4" transform="rotate(-90 38 38)"/>
+      </svg><div class="val">62<small>%</small></div></div>
+      <div class="rl">内存</div>
+    </div>
+    <div class="row">
+      <div class="card mini"><div class="k"><svg class="ic"><use href="#i-down"/></svg>下行</div><div class="v">2.4 <small>MB/s</small></div></div>
+      <div class="card mini"><div class="k"><svg class="ic"><use href="#i-up"/></svg>上行</div><div class="v">312 <small>KB/s</small></div></div>
+      <div class="card mini"><div class="k"><svg class="ic"><use href="#i-chip"/></svg>开机</div><div class="v">3 <small>天 4 小时</small></div></div>
+    </div>
+  </div>`;
+
+const WEATHER_HTML = `
+  <div class="wea">
+    <div class="card now">
+      <div class="upd">10 分钟前更新</div>
+      <div class="city"><svg class="ic"><use href="#i-pin"/></svg>深圳 · 南山区</div>
+      <div class="tmp">28.4<small>°</small></div>
+      <div class="cond"><span class="w"><svg class="ic"><use href="#i-cloudsun"/></svg></span>多云 · 体感 31°</div>
+    </div>
+    <div class="r">
+      <div class="card hours">
+        ${[["现在","28°","i-cloudsun"],["14时","30°","i-cloudsun"],["15时","31°","i-cloudsun"],["16时","29°","i-cloudsun"],["17时","27°","i-cloudsun"]].map(h=>`
+          <div class="h"><span>${h[0]}</span><span class="w"><svg class="ic"><use href="#${h[2]}"/></svg></span><span class="t">${h[1]}</span></div>`).join("")}
+      </div>
+      <div class="meta">
+        <div class="card m">湿度<b>68%</b></div>
+        <div class="card m">东风<b>2 级</b></div>
+        <div class="card m">空气<b>优</b></div>
+      </div>
+    </div>
+  </div>`;
+
+const TASKS_HTML = `
+  <div class="tasks">
+    ${[
+      ["#a78bfa","写周报","Work","18:00",false],
+      ["#4ade80","跑步 5 公里","Sport","20:30",false],
+      ["#fbbf24","读《设计心理学》","Read","22:00",false],
+      ["#60cdff","回复邮件","Work","23:00",true],
+    ].map(t=>`
+      <div class="card t ${t[4]?"did":""}" onclick="this.classList.toggle('did')">
+        <div class="done">✓</div><div class="cdot" style="background:${t[0]}"></div>
+        <div class="nm">${t[1]}</div><div class="cat">${t[2]}</div><div class="tm">${t[3]}</div>
+      </div>`).join("")}
+    <div class="add">＋ 新建日程</div>
+  </div>`;
+
+const MONTH_HTML = `
+  <div class="cal">
+    <div class="hd">
+      <div class="t">9 月<small>2026</small></div>
+      <div class="n"><button>‹</button><button>›</button></div>
+    </div>
+    <div class="grid">
+      ${["一","二","三","四","五","六","日"].map(d=>`<div class="wd">${d}</div>`).join("")}
+      ${(()=>{
+        // 2026 年 9 月：1 日是周二。周一开头 → 首格是 8/31，尾部补 10/1–10/3 到 35 格
+        const cells = [31];
+        for (let d = 1; d <= 30; d++) cells.push(d);
+        cells.push(1, 2, 3);
+        const plan = [14, 16, 18, 23];
+        return cells.map((n, i) => {
+          const out = i === 0 || i >= 31;
+          const cls = ["dy", out ? "out" : "", (!out && n === 13) ? "today" : "",
+            (!out && plan.includes(n)) ? "plan" : ""].join(" ").trim();
+          return `<div class="${cls}">${n}</div>`;
+        }).join("");
+      })()}
+    </div>
+    <div class="ft">已计划 4 天 · 到点 23:00 关机</div>
+  </div>`;
+
+const QUICK_HTML = `
+  <div class="quick">
+    <div class="tip">第一行单击执行 · 第二行<b>按住 0.9 秒</b>且松手时仍停在按钮上才触发 · 点「＋」添加自定义程序</div>
+    <div class="grid">
+      ${[
+        ["i-globe","浏览器","#38bdf8",false],
+        ["i-term","命令行","#4ade80",false],
+        ["SLOT","","",false],
+        ["i-moon","睡眠","#818cf8",true],
+        ["i-restart","重启","#fb923c",true],
+        ["i-power","关机","#f87171",true],
+      ].map(q=> q[0]==="SLOT" ? `
+        <div class="qa add" id="qaAdd" title="添加自定义程序">
+          <div class="ball" style="background:transparent;border:1.5px dashed var(--track);box-shadow:none;color:var(--sub)"><svg class="ic"><use href="#i-plus"/></svg></div>
+          <div class="lb">添加程序</div>
+        </div>` : `
+        <div class="qa ${q[3]?"dgr":""}" style="--bc:${q[2]}" data-danger="${q[3]}">
+          <div class="ball"><svg class="ic"><use href="#${q[0]}"/></svg></div>
+          <div class="lb">${q[1]}</div>
+          <svg class="arc" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16.5" fill="none" stroke="var(--track)" stroke-width="3"/>
+            <circle class="arcf" cx="20" cy="20" r="16.5" fill="none" stroke="${q[2]}" stroke-width="3"
+              stroke-linecap="round" stroke-dasharray="104" stroke-dashoffset="104" transform="rotate(-90 20 20)"/></svg>
+        </div>`).join("")}
+    </div>
+    <div class="done-toast" id="qToast"></div>
+    <div class="qedit" id="qEdit">
+      <div class="qe-t">添加自定义程序</div>
+      <input id="qeName" type="text" placeholder="显示名称（如：网易云音乐）" maxlength="10">
+      <input id="qePath" type="text" placeholder="程序路径或命令（实机写入 quick_custom 配置）">
+      <div class="qe-row"><span>颜色</span>
+        <div class="swatches">
+          <span class="sw on" style="background:#38bdf8" data-c="#38bdf8"></span>
+          <span class="sw" style="background:#4ade80" data-c="#4ade80"></span>
+          <span class="sw" style="background:#fbbf24" data-c="#fbbf24"></span>
+          <span class="sw" style="background:#f87171" data-c="#f87171"></span>
+          <span class="sw" style="background:#a78bfa" data-c="#a78bfa"></span>
+        </div>
+      </div>
+      <div class="qe-btns"><button class="c">取消</button><button class="s">添加到快捷</button></div>
+    </div>
+  </div>`;
+
+function wireQuick(){
+  const HOLD = 900;
+  document.querySelectorAll("#body-e-quick .qa").forEach(card => {
+    if (card.id === "qaAdd") return;
+    if (card.dataset.danger !== "true") {
+      card.addEventListener("click", () => popToast(`已打开「${card.querySelector(".lb").textContent}」（模拟）`));
+      return;
+    }
+    let t0 = 0, timer = null;
+    const arc = card.querySelector(".arcf");
+    const start = ev => {
+      ev.preventDefault();
+      card.classList.add("holding");
+      t0 = performance.now();
+      timer = setInterval(() => {
+        const p = Math.min(1, (performance.now() - t0) / HOLD);
+        arc.style.strokeDashoffset = 104 * (1 - p);
+        if (p >= 1) {
+          clearInterval(timer);
+          card.classList.remove("holding");
+          popToast(`已执行「${card.querySelector(".lb").textContent}」（模拟）`);
+        }
+      }, 30);
+    };
+    const cancel = () => { clearInterval(timer); card.classList.remove("holding"); arc.style.strokeDashoffset = 104; };
+    card.addEventListener("pointerdown", start);
+    card.addEventListener("pointerup", cancel);
+    card.addEventListener("pointerleave", cancel);
+  });
+  // 自定义程序编辑器（演示版：最多 1 个自定义槽位；右键已添加的卡片移除）
+  const slot = document.getElementById("qaAdd");
+  const editor = document.getElementById("qEdit");
+  if (!slot || !editor) return;
+  slot.addEventListener("click", () => {
+    document.getElementById("qeName").value = "";
+    document.getElementById("qePath").value = "";
+    editor.classList.add("show");
+  });
+  editor.querySelectorAll(".sw").forEach(sw => sw.onclick = () => {
+    editor.querySelectorAll(".sw").forEach(x => x.classList.remove("on"));
+    sw.classList.add("on");
+  });
+  editor.querySelector(".c").onclick = () => editor.classList.remove("show");
+  editor.querySelector(".s").onclick = () => {
+    const name = document.getElementById("qeName").value.trim() || "我的程序";
+    const color = editor.querySelector(".sw.on").dataset.c;
+    const card = document.createElement("div");
+    card.className = "qa";
+    card.style.setProperty("--bc", color);
+    card.title = "点击启动 · 右键移除（模拟）";
+    card.innerHTML = `<div class="ball" style="box-shadow:0 4px 12px ${color}66"><svg class="ic"><use href="#i-grid"/></svg></div><div class="lb"></div>`;
+    card.querySelector(".lb").textContent = name;
+    card.addEventListener("click", () => popToast(`已启动「${name}」（模拟）`));
+    card.addEventListener("contextmenu", ev => {
+      ev.preventDefault();
+      card.replaceWith(slot);
+      editor.classList.remove("show");
+      popToast("已移除自定义程序（模拟）");
+    });
+    slot.replaceWith(card);
+    editor.classList.remove("show");
+    popToast(`已添加「${name}」· 右键卡片可移除`);
+  };
+}
+let toastTimer = null;
+function popToast(msg){
+  const t = document.getElementById("qToast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+/* ================= 计划倒计时 ================= */
+let planTimer = null;
+function startPlanCountdown(){
+  clearInterval(planTimer);
+  const tick = () => {
+    const el = document.getElementById("planNext");
+    if (!el) { clearInterval(planTimer); return; }
+    const now = new Date();
+    const tgt = new Date(); tgt.setHours(23, 0, 0, 0);
+    if (tgt <= now) tgt.setDate(tgt.getDate() + 1);
+    const s = Math.max(0, (tgt - now) / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = Math.floor(s % 60);
+    el.textContent = `今晚 23:00 · 剩 ${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  };
+  tick(); planTimer = setInterval(tick, 1000);
+}
+
+/* ================= Alert 倒计时 ================= */
+let alertSec = 14 * 60 + 59, alertTimer = null;
+function alertTick(){
+  const el = document.getElementById("alertCd");
+  if (!el) return;
+  el.textContent = `00:${String(Math.floor(alertSec/60)).padStart(2,"0")}:${String(alertSec%60).padStart(2,"0")}`;
+  el.style.color = alertSec <= 10 ? "var(--danger)" : "";
+}
+alertTimer = setInterval(() => {
+  if (document.querySelector('.screen[data-name="o-alert"]').classList.contains("on")) {
+    alertSec = Math.max(0, alertSec - 1); alertTick();
+  }
+}, 1000);
+alertTick();
+document.getElementById("alertCancel").onclick = () => {
+  const box = document.getElementById("alertBox");
+  box.classList.add("off");
+  setTimeout(() => { box.classList.remove("off"); alertSec = 14*60+59; alertTick(); }, 2200);
+};
+document.getElementById("alertNow").onclick = () => popToast("已执行「关机」（模拟）");
+
+/* ================= 退出确认 12 秒环 ================= */
+let confirmLeft = 12;
+setInterval(() => {
+  if (!document.querySelector('.screen[data-name="o-confirm"]').classList.contains("on")) return;
+  confirmLeft = confirmLeft <= 0 ? 12 : confirmLeft - 1;
+  document.getElementById("confirmArc").style.strokeDashoffset = 66 * (1 - confirmLeft / 12);
+}, 1000);
+
+/* ================= 时钟 / 频谱 ================= */
+setInterval(() => {
+  const n = new Date();
+  const t = `${String(n.getHours()).padStart(2,"0")}:${String(n.getMinutes()).padStart(2,"0")}`;
+  document.querySelectorAll("#liveClock,#compClock").forEach(el => el.textContent = t);
+}, 1000);
+(() => {
+  const tick = () => document.querySelectorAll(".spectrum").forEach(sp => {
+    [...sp.children].forEach((bar, i) => {
+      const base = [0.5, 0.8, 0.65, 0.9, 0.4][i];
+      const v = Math.max(0.12, Math.min(1, base + (Math.random() - 0.5) * 0.7));
+      bar.style.height = (v * 100) + "%";
+    });
+  });
+  setInterval(() => {
+    if (document.querySelector('.screen[data-name="c-media"]').classList.contains("on")
+      || document.querySelector('.screen[data-name="c-comp"]').classList.contains("on")) tick();
+  }, 110);
+})();
+
+/* ================= 顶栏控件 ================= */
+const bd = document.getElementById("bDark"), bl = document.getElementById("bLight");
+bd.onclick = () => { document.documentElement.dataset.theme = "dark"; bd.classList.add("on"); bl.classList.remove("on"); };
+bl.onclick = () => { document.documentElement.dataset.theme = "light"; bl.classList.add("on"); bd.classList.remove("on"); };
+const bw = document.getElementById("bWall"), bg = document.getElementById("bGrad");
+bw.onclick = () => { document.getElementById("desktop").classList.remove("nowall"); bw.classList.add("on"); bg.classList.remove("on"); };
+bg.onclick = () => { document.getElementById("desktop").classList.add("nowall"); bg.classList.add("on"); bw.classList.remove("on"); };
+document.querySelectorAll("[data-z]").forEach(b => b.onclick = () => {
+  document.documentElement.style.setProperty("--zoom", b.dataset.z);
+  document.querySelectorAll("[data-z]").forEach(x => x.classList.toggle("on", x === b));
+});
+
+/* ================= 快捷键 ================= */
+window.addEventListener("keydown", ev => {
+  if (["INPUT","SELECT","TEXTAREA"].includes(document.activeElement?.tagName)) return;
+  const i = shortcuts.indexOf(ev.key);
+  if (i >= 0 && SCREENS[i]) show(SCREENS[i].id);
+});
+
+show("e-plan");
+</script>
+</body>
+</html>
