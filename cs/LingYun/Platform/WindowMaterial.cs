@@ -83,7 +83,8 @@ internal static class WindowMaterial
         => material switch
         {
             // 液态玻璃 = 岛上那套半透明材质（不模糊、背后内容直接透出来）；亚克力走系统模糊，色调可薄一些
-            Glass => dark ? unchecked((int)0xA6121418) : unchecked((int)0xA6FFFFFF),
+            // 与岛的液态玻璃主体**同 alpha**（214 = 0xD6）：同一个主题下岛和窗口才是同一块材质
+            Glass => dark ? unchecked((int)0xD6121418) : unchecked((int)0xD6FFFFFF),
             _ => dark ? unchecked((int)0x861A1B20) : unchecked((int)0x7AF2F4F8),   // acrylic
         };
 

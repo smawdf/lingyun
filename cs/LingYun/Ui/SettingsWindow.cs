@@ -57,6 +57,7 @@ public sealed class SettingsWindow : Window
     private readonly RadioButton _matAcrylic = new();
     private readonly RadioButton _matGlass = new();
 
+    private Grid? _depthRow;
     private readonly RadioButton _topAlways = new();
     private readonly RadioButton _topNormal = new();
     private readonly RadioButton _topAuto = new();
@@ -388,7 +389,8 @@ public sealed class SettingsWindow : Window
         AddRadioRow(card, "材质", new[] { ("亚克力", _matAcrylic), ("液态玻璃", _matGlass) }, "uimaterial");
         _matAcrylic.Checked += (_, _) => SetAppearance(glass: false);
         _matGlass.Checked += (_, _) => SetAppearance(glass: true);
-        AddRadioRow(card, "深浅", new[]
+        // 液态玻璃档下这一行不适用（玻璃恒浅色 + 自适应），只置灰它本身，别连累上面的材质行
+        _depthRow = AddRadioRow(card, "深浅", new[]
         {
             ("深色", _themeDark), ("浅色", _themeLight), ("跟随系统", _themeSystem),
         });
@@ -453,13 +455,14 @@ public sealed class SettingsWindow : Window
             _offsetYLabel.Text = $"  {v:0}px";
             _island.ApplyGeometry();
         });
-        AddSlider(card, "自动回缩", _autoCollapse, _autoCollapseLabel, v =>
+        AddSlider(card, "展开自动关闭", _autoCollapse, _autoCollapseLabel, v =>
         {
             _cfg.AutoCollapseMs = (int)v;
-            _autoCollapseLabel.Text = v <= 0 ? "  不自动回缩" : $"  离开 {v / 1000.0:0.0}s 后";
+            _autoCollapseLabel.Text = v <= 0 ? "  不自动关闭" : $"  离开 {v / 1000.0:0.0}s 后";
             _island.ApplyConfig();
         });
-        AddHint(root, "展开面板在鼠标离开岛后多久自动收起；调到最左（0）就永不自动收起，点空白处仍然可以手动收起。");
+        AddHint(root, "岛的展开面板在鼠标离开后多久自动关闭；拉到最左（0）就永不自动关闭，"
+                      + "那时只能点空白处关闭。");
 
         AddGroupLabel(root, "窗口层级");
         card = NewCard(root);
@@ -686,6 +689,14 @@ public sealed class SettingsWindow : Window
                      + (effective == "solid" ? "（当前系统不支持系统模糊，退化为纯色）" : ""),
             };
         }
+        // 液态玻璃档下「深浅」不适用：玻璃恒浅色（深色壁纸时自适应切深色玻璃）
+        if (_depthRow is not null)
+        {
+            bool glassNow = IslandPalette.IsLiquidGlass(_cfg.Theme);
+            foreach (UIElement child in _depthRow.Children)
+                child.IsEnabled = !glassNow;
+            _themeDark.IsEnabled = _themeLight.IsEnabled = _themeSystem.IsEnabled = !glassNow;
+        }
         ApplyControlStyles();
         RefreshStates();
     }
@@ -899,7 +910,7 @@ public sealed class SettingsWindow : Window
         _offsetY.Value = _cfg.OffsetY;
         _autoCollapse.Value = Math.Clamp(_cfg.AutoCollapseMs, 0, 10000);
         _autoCollapseLabel.Text = _cfg.AutoCollapseMs <= 0
-            ? "  不自动回缩" : $"  离开 {_cfg.AutoCollapseMs / 1000.0:0.0}s 后";
+            ? "  不自动关闭" : $"  离开 {_cfg.AutoCollapseMs / 1000.0:0.0}s 后";
 
         _perfNetwork.IsChecked = _cfg.PerfNetwork;
         _composite.IsChecked = _cfg.Composite;
@@ -1096,7 +1107,7 @@ public sealed class SettingsWindow : Window
         root.Children.Add(strip);
     }
 
-    private void AddRadioRow(StackPanel root, string label, (string Text, RadioButton Btn)[] options,
+    private Grid AddRadioRow(StackPanel root, string label, (string Text, RadioButton Btn)[] options,
         string group = "theme")
     {
         var row = new Grid { Margin = new Thickness(0, 8, 0, 8) };
@@ -1129,6 +1140,7 @@ public sealed class SettingsWindow : Window
         Grid.SetColumn(strip, 1);
         row.Children.Add(strip);
         root.Children.Add(row);
+        return row;
     }
 
     private void AddCheck(StackPanel root, CheckBox box, string label, string hint,
