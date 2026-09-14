@@ -43,7 +43,8 @@ public sealed class NativeIslandApp : IDisposable
     private const double MaxRadius = 26;
     private const double MorphMs = 360;
     private const int WarnMinutes = 15;
-    private const double AutoCollapseMs = 900;   // 展开态下鼠标离开多久后自动回缩
+    /// <summary>展开态自动回缩的默认时长（毫秒）；配置为 0 表示不自动回缩。</summary>
+    private const double AutoCollapseDefaultMs = 900;
     private const double ToastVisibleMs = 6000;  // 系统通知在胶囊里停留多久
     private const float ToastTitleSize = 13;     // 通知标题字号（基准像素）
     private const float ToastBodySize = 11.5f;   // 通知正文字号（基准像素）
@@ -570,10 +571,11 @@ public sealed class NativeIslandApp : IDisposable
 
             // 自动回缩：展开态下鼠标离开一小段时间就收回紧凑态。
             // alert 不参与——那是必须由用户处理的状态，不能自己消失。
-            if (_mode == "expanded" && !_hover && _leftAt is not null
-                && (now - _leftAt.Value).TotalMilliseconds > AutoCollapseMs)
+            double collapseMs = _cfg.AutoCollapseMs;
+            if (_mode == "expanded" && _leftAt is not null
+                && ShouldAutoCollapse(_cfg.AutoCollapseMs, _hover, CursorInIsland(), _leftAt, now))
             {
-                TraceClick("auto-collapse (mouse left expanded panel)");
+                TraceClick($"auto-collapse ({collapseMs:0}ms, cursor outside)");
                 SetMode("compact");
             }
 
@@ -604,6 +606,29 @@ public sealed class NativeIslandApp : IDisposable
     }
 
     private static double OutExpo(double t) => t >= 1 ? 1 : 1 - Math.Pow(2, -10 * t);
+
+    /// <summary>
+    /// 展开态是否该自动回缩（纯函数，自测用）：
+    /// 配置为 0 表示关闭；鼠标还在岛上（或 WM_MOUSELEAVE 抖动导致 hover=false 但光标其实还在岛上）不收。
+    /// 以前只看 hover 标志，分层窗重绘时会偶发 WM_MOUSELEAVE，鼠标没动面板却缩了。
+    /// </summary>
+    internal static bool ShouldAutoCollapse(double configuredMs, bool hovered, bool cursorInside,
+        DateTime? leftAt, DateTime nowUtc)
+    {
+        if (configuredMs <= 0) return false;
+        if (hovered || cursorInside) return false;
+        if (leftAt is not { } t) return false;
+        return (nowUtc - t).TotalMilliseconds > configuredMs;
+    }
+
+    /// <summary>光标是否落在岛体矩形内（屏幕物理像素）：自动回缩前的二次确认。</summary>
+    private bool CursorInIsland()
+    {
+        if (!Native.GetCursorPos(out var p)) return false;
+        var (ix, iy, iw, ih) = Island();
+        int x0 = _shellX + ix, y0 = _shellY + iy;
+        return p.x >= x0 && p.x < x0 + iw && p.y >= y0 && p.y < y0 + ih;
+    }
 
     /// <summary>
     /// 闲置自动隐藏（默认关闭）：无媒体、无弹层、鼠标不在岛上、离开超过 10 秒 → 收起；
@@ -1002,11 +1027,11 @@ public sealed class NativeIslandApp : IDisposable
                     }, TaskScheduler.Default);
                     return;
                 }
-                // 传输键（上一首 / 播放暂停 / 下一首）
+                // 传输键（上一首 / 播放暂停 / 下一首）：点完**保持展开**——
+                // 以前这里无条件 SetMode("compact")，表现为"点一下暂停面板就缩回去了"
                 if (ch.Prev.Contains((float)x, (float)y)) _ = _media.PrevAsync();
                 else if (ch.Play.Contains((float)x, (float)y)) _ = _media.PlayPauseAsync();
                 else if (ch.Next.Contains((float)x, (float)y)) _ = _media.NextAsync();
-                SetMode("compact");
                 return;
             }
             // 性能/天气等展示页没有可操作控件：点击空白同样收起展开面板。
@@ -2089,7 +2114,7 @@ public sealed class NativeIslandApp : IDisposable
     }
 
     /// <summary>当前展开媒体页样式（Normalize 保证只可能是 a/b/c）。</summary>
-    private string MediaStyleKey => _cfg.MediaStyle is "b" or "c" or "d" ? _cfg.MediaStyle : "a";
+    private string MediaStyleKey => _cfg.MediaStyle is "b" or "c" ? _cfg.MediaStyle : "a";
 
     /// <summary>
     /// 展开媒体页的一套控件矩形与排版参数（绘制与命中测试共用，按 <c>media_style</c> 计算）。
@@ -2121,7 +2146,7 @@ public sealed class NativeIslandApp : IDisposable
                     TitleBox: new SKRect(L + 134 * s, T + 48 * s, R - 44 * s, T + 104 * s),
                     18 * s, true, T + 68 * s, T + 94 * s, T + 122 * s, 12.5f * s,
                     SrcChip: ChipAt(L + 134 * s, T + 20 * s, 24 * s, s),
-                    Seek: new SKRect(L + 26 * s, T + 212 * s, R - 26 * s, T + 240 * s),
+                    Seek: new SKRect(L + 58 * s, T + 212 * s, R - 58 * s, T + 240 * s),
                     TimesY: T + 246 * s,
                     LyrBox: new SKRect(L + 26 * s, T + 150 * s, R - 26 * s, T + 208 * s),
                     LyrCurY: T + 172 * s, LyrNextY: T + 200 * s, LyrCurSize: 15.5f * s, LyrNextSize: 12.5f * s, LyrLeft: true,
@@ -2141,7 +2166,7 @@ public sealed class NativeIslandApp : IDisposable
                     TitleBox: new SKRect(L + 150 * s, T + 36 * s, R - 46 * s, T + 98 * s),
                     21 * s, true, T + 62 * s, T + 89 * s, T + 114 * s, 13 * s,
                     SrcChip: ChipRightAt(R - 52 * s, T + 12 * s, 24 * s, s),
-                    Seek: new SKRect(L + 28 * s, T + 226 * s, R - 28 * s, T + 254 * s),
+                    Seek: new SKRect(L + 58 * s, T + 226 * s, R - 58 * s, T + 254 * s),
                     TimesY: T + 260 * s,
                     LyrBox: new SKRect(L + 24 * s, T + 166 * s, R - 24 * s, T + 224 * s),
                     LyrCurY: T + 188 * s, LyrNextY: T + 214 * s, LyrCurSize: 15.5f * s, LyrNextSize: 12.5f * s, LyrLeft: false,
@@ -2154,29 +2179,6 @@ public sealed class NativeIslandApp : IDisposable
                     Next: new SKRect(L + 277 * s, B - 57 * s, L + 311 * s, B - 23 * s),
                     PlayRadius: 22 * s);
             }
-            case "d":   // 卡片式（对齐 iOS/Apple Music 卡片）：大封面 + 大标题，
-                        // 传输键一行居中，进度条在下、两端带时间（参考用户给的样式）
-            {
-                float cy = T + 206 * s;                       // 传输键一行
-                return new MediaChrome(
-                    Cover: new SKRect(L + 24 * s, T + 20 * s, L + 128 * s, T + 124 * s), 24 * s, 0f,
-                    TitleBox: new SKRect(L + 146 * s, T + 30 * s, R - 52 * s, T + 100 * s),
-                    23 * s, true, T + 60 * s, T + 90 * s, T + 114 * s, 13 * s,
-                    SrcChip: ChipRightAt(R - 52 * s, T + 12 * s, 24 * s, s),
-                    // 进度条夹在两端时间之间（时间在条的两侧，不是条下面）
-                    Seek: new SKRect(L + 78 * s, T + 242 * s, R - 78 * s, T + 262 * s),
-                    TimesY: T + 256 * s,
-                    LyrBox: new SKRect(L + 24 * s, T + 134 * s, R - 24 * s, T + 182 * s),
-                    LyrCurY: T + 152 * s, LyrNextY: T + 174 * s, LyrCurSize: 14 * s, LyrNextSize: 11.5f * s, LyrLeft: true,
-                    BgBar: SKRect.Empty,
-                    Home: new SKRect(L + 22 * s, B - 46 * s, L + 98 * s, B - 20 * s),
-                    VolGlyph: new SKRect(R - 136 * s, B - 42 * s, R - 112 * s, B - 18 * s),
-                    VolTrack: new SKRect(R - 104 * s, B - 29 * s, R - 34 * s, B - 25 * s),
-                    Prev: new SKRect(r.MidX - 106 * s, cy - 18 * s, r.MidX - 70 * s, cy + 18 * s),
-                    Play: new SKRect(r.MidX - 26 * s, cy - 26 * s, r.MidX + 26 * s, cy + 26 * s),
-                    Next: new SKRect(r.MidX + 70 * s, cy - 18 * s, r.MidX + 106 * s, cy + 18 * s),
-                    PlayRadius: 0f);                          // 0 = 不要圆底，画纯三角（对齐参考图）
-            }
             default:    // a 精修：结构同旧版（左封面/中进度/底传输），质感重做
             {
                 return new MediaChrome(
@@ -2184,7 +2186,7 @@ public sealed class NativeIslandApp : IDisposable
                     TitleBox: new SKRect(L + 118 * s, T + 24 * s, R - 20 * s, T + 52 * s),
                     17 * s, false, T + 46 * s, 0f, T + 68 * s, 12.5f * s,
                     SrcChip: ChipAt(L + 118 * s, T + 76 * s, 22 * s, s),
-                    Seek: new SKRect(L + 24 * s, T + 136 * s, R - 24 * s, T + 160 * s),
+                    Seek: new SKRect(L + 56 * s, T + 136 * s, R - 56 * s, T + 160 * s),
                     TimesY: T + 168 * s,
                     LyrBox: new SKRect(L + 24 * s, T + 180 * s, R - 24 * s, T + 232 * s),
                     LyrCurY: T + 200 * s, LyrNextY: T + 226 * s, LyrCurSize: 15 * s, LyrNextSize: 12 * s, LyrLeft: false,
@@ -2479,18 +2481,6 @@ public sealed class NativeIslandApp : IDisposable
     {
         var st = _media.State;
         DrawArtStyled(canvas, ch.Cover, ch.CoverRadius, s, ch.CoverTiltDeg, shadow: MediaStyleKey != "a");
-        if (MediaStyleKey == "d")
-        {
-            // 卡片式：封面右下角贴一枚应用小方块（参考图里那颗音乐角标）
-            float bs = 26 * s;
-            var badge = new SKRect(ch.Cover.Right - bs * 0.72f, ch.Cover.Bottom - bs * 0.72f,
-                                   ch.Cover.Right + bs * 0.28f, ch.Cover.Bottom + bs * 0.28f);
-            DrawMaterialSurface(canvas, badge, 7 * s, Pal.Card);
-            var icon = IconBitmap(st.AppId);
-            if (icon is not null)
-                canvas.DrawBitmap(icon, new SKRect(badge.Left + 4 * s, badge.Top + 4 * s,
-                                                   badge.Right - 4 * s, badge.Bottom - 4 * s));
-        }
         string title = string.IsNullOrWhiteSpace(st.Title) ? "未知" : st.Title;
         if (ch.TwoLineTitle)
         {
@@ -2574,19 +2564,7 @@ public sealed class NativeIslandApp : IDisposable
             };
             canvas.DrawRoundRect(new SKRect(track.Left, track.Top, track.Left + fillW, track.Bottom), 2 * s, 2 * s, fp);
         }
-        if (_hover)
-        {
-            float dx = track.Left + fillW;
-            using (var sh = new SKPaint
-            {
-                Color = Fade(Pal.Shadow, 0.85f),
-                IsAntialias = true,
-                MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 3 * s),
-            })
-                canvas.DrawCircle(dx, ty, 7 * s, sh);
-            using var dp = new SKPaint { Color = SKColors.White, IsAntialias = true };
-            canvas.DrawCircle(dx, ty, 5.5f * s, dp);
-        }
+        // 不要进度点（用户要求）：只留细条本身的填充
     }
 
     /// <summary>进度时间：左=已播，右=-剩余（对齐 Apple Music 习惯）。</summary>
@@ -2594,17 +2572,11 @@ public sealed class NativeIslandApp : IDisposable
     {
         var st = _media.State;
         if (st.DurationMs <= 0) return;
-        if (MediaStyleKey == "d")
-        {
-            // 卡片式：已播时间在条左、总时长在条右（参考图是 02:58 / 04:23 这种）
-            DrawText(canvas, Fmt(st.PositionMs), ch.LyrBox.Left - 54 * s, ch.TimesY, 11.5f * s, Pal.Sub);
-            string total = Fmt(st.DurationMs);
-            DrawText(canvas, total, ch.Seek.Right + 54 * s - MeasureText(total, 11.5f * s), ch.TimesY, 11.5f * s, Pal.Dim);
-            return;
-        }
-        DrawText(canvas, Fmt(st.PositionMs), ch.Seek.Left, ch.TimesY, 11 * s, Pal.Sub);
-        string neg = "-" + Fmt(st.DurationMs - st.PositionMs);
-        DrawText(canvas, neg, ch.Seek.Right - MeasureText(neg, 11 * s), ch.TimesY, 11 * s, Pal.Dim);
+        // 已播时间贴条左、总时长贴条右，和进度条同一行（用户给的参考形态）
+        DrawText(canvas, Fmt(st.PositionMs), ch.Seek.Left - 56 * s, ch.Seek.MidY + 4 * s, 11.5f * s, Pal.Sub);
+        string total = Fmt(st.DurationMs);
+        DrawText(canvas, total, ch.Seek.Right + 56 * s - MeasureText(total, 11.5f * s),
+            ch.Seek.MidY + 4 * s, 11.5f * s, Pal.Dim);
     }
 
     /// <summary>传输键 + ⌂面板 + 音量行（三样式共用；B 的控件收在玻璃条里）。</summary>
@@ -2617,28 +2589,11 @@ public sealed class NativeIslandApp : IDisposable
             // B 沉浸：玻璃控制条（与公共材质同源，透明度可实时调节）
             DrawMaterialSurface(canvas, ch.BgBar, 17 * s, Pal.Card);
         }
-        DrawSkipGlyph(canvas, ch.Prev.MidX, ch.Prev.MidY, MediaStyleKey == "d" ? 17 * s : 15 * s, next: false, Pal.Fg);
-        DrawSkipGlyph(canvas, ch.Next.MidX, ch.Next.MidY, MediaStyleKey == "d" ? 17 * s : 15 * s, next: true, Pal.Fg);
-        if (MediaStyleKey == "d" && ch.PlayRadius <= 0)
-        {
-            // 卡片式：播放键就是一枚实心三角（对齐参考图，没有圆底）
-            DrawPlayPauseGlyph(canvas, ch.Play.MidX, ch.Play.MidY, 26 * s, st.IsPlaying, Pal.Fg);
-            DrawHomeChip(canvas, ch, s);
-            DrawVolumeRow(canvas, ch, s);
-            return;
-        }
-        // 主播放钮：圆形底 + 柔和投影（深色白底黑标 / 浅色墨底白标）
-        using (var sh = new SKPaint
-        {
-            Color = Fade(Pal.Shadow, 0.85f),
-            IsAntialias = true,
-            MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 8 * s),
-        })
-            canvas.DrawCircle(ch.Play.MidX, ch.Play.MidY, ch.PlayRadius, sh);
-        using (var cp = new SKPaint { Color = dark ? SKColors.White : new SKColor(0x18, 0x18, 0x1a), IsAntialias = true })
-            canvas.DrawCircle(ch.Play.MidX, ch.Play.MidY, ch.PlayRadius, cp);
-        DrawPlayPauseGlyph(canvas, ch.Play.MidX, ch.Play.MidY, 19 * s, st.IsPlaying,
-            dark ? new SKColor(0x0b, 0x0b, 0x0d) : SKColors.White);
+        DrawSkipGlyph(canvas, ch.Prev.MidX, ch.Prev.MidY, 17 * s, next: false, Pal.Fg);
+        DrawSkipGlyph(canvas, ch.Next.MidX, ch.Next.MidY, 17 * s, next: true, Pal.Fg);
+        // 播放/暂停：纯矢量字形（对齐用户给的参考形态——不要圆底）
+        DrawPlayPauseGlyph(canvas, ch.Play.MidX, ch.Play.MidY,
+            ch.PlayRadius > 0 ? 22 * s : 26 * s, st.IsPlaying, Pal.Fg);
         DrawHomeChip(canvas, ch, s);
         DrawVolumeRow(canvas, ch, s);
     }

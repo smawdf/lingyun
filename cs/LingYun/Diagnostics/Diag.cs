@@ -621,17 +621,6 @@ internal static class Diag
         { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass", Opacity = 40 });
         var mediaGlass40 = new MediaSessionService();
         var appGlass40 = new NativeIslandApp(glass40Cfg, mediaGlass40);
-        // 媒体页样式 D（卡片式）：控制行一行 + 两端时间的进度条
-        var styleDCfg = ConfigStore.Normalize(new AppConfig
-        { Enabled = true, Hour = 23, Minute = 0, MediaStyle = "d" });
-        var mediaStyleD = new MediaSessionService();
-        var appStyleD = new NativeIslandApp(styleDCfg, mediaStyleD);
-        // 液态玻璃 + 卡片式：看材质叠加后的观感
-        var glassDCfg = ConfigStore.Normalize(new AppConfig
-        { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass", MediaStyle = "d" });
-        var mediaGlassD = new MediaSessionService();
-        var appGlassD = new NativeIslandApp(glassDCfg, mediaGlassD);
-
         var glassBCfg = ConfigStore.Normalize(new AppConfig
         { Enabled = true, Hour = 23, Minute = 0, Theme = "liquid-glass", MediaStyle = "b" });
         var mediaGlassB = new MediaSessionService();
@@ -992,35 +981,6 @@ internal static class Diag
                 appPages.ForceQuickPress(restartAt, QuickActions.HoldMs * 0.66);   // 正按「重启」，进度 66%
             }),
             // ---- 液态玻璃（应用内浅色半透明材质；不是桌面级真实 Acrylic 模糊）----
-            // 卡片式播放页（d）：控制行在上、进度条与两端时间在下
-            ("expanded-media-style-d", () =>
-            {
-                mediaStyleD.InjectState(new MediaState
-                {
-                    Active = true, Title = "Letting Go", Artist = "在夜深人静里写着",
-                    AppId = "cloudmusic.exe", Status = "Playing",
-                    PositionMs = 178_000, DurationMs = 263_000, Thumb = SynthCover(280),
-                });
-                mediaStyleD.InjectSessions(Array.Empty<SessionInfo>(), -1);
-                appStyleD.ForceFocus("media");
-                appStyleD.ForceMode("expanded");
-                appStyleD.InjectVolume(0.55f);
-                appStyleD.InjectLyrics(LyricsService.ParseLrc(
-                    "[00:00.00]词：黄俊郎\n[02:58.00]爱恨开始分明\n"));
-            }),
-            ("expanded-media-style-d-glass", () =>
-            {
-                mediaGlassD.InjectState(new MediaState
-                {
-                    Active = true, Title = "Letting Go", Artist = "在夜深人静里写着",
-                    AppId = "cloudmusic.exe", Status = "Playing",
-                    PositionMs = 178_000, DurationMs = 263_000, Thumb = SynthCover(200),
-                });
-                mediaGlassD.InjectSessions(Array.Empty<SessionInfo>(), -1);
-                appGlassD.ForceFocus("media");
-                appGlassD.ForceMode("expanded");
-                appGlassD.InjectVolume(0.55f);
-            }),
             ("compact-clock-glass", () =>
             {
                 appGlass.ForceFocus("timer");
@@ -1105,8 +1065,6 @@ internal static class Diag
             ["compact-clock-glass"] = appGlass, ["compact-clock-glass-40"] = appGlass40,
             ["expanded-plan-glass"] = appGlass, ["page-quick-glass"] = appGlass,
             ["expanded-media-style-b-glass"] = appGlassB, ["expanded-media-style-c-glass"] = appGlassC,
-            ["expanded-media-style-d"] = appStyleD,
-            ["expanded-media-style-d-glass"] = appGlassD,
             ["compact-clock-glass-dark"] = appGlassDark,
             ["compact-clock-glass-adaptive-dark"] = appGlassAdapt,
         };
@@ -1183,10 +1141,6 @@ internal static class Diag
             mediaGlassDark.Dispose();
             appGlassAdapt.Dispose();
             mediaGlassAdapt.Dispose();
-            appStyleD.Dispose();
-            mediaStyleD.Dispose();
-            appGlassD.Dispose();
-            mediaGlassD.Dispose();
         }
 
         return 0;
@@ -2112,25 +2066,35 @@ internal static class Diag
                 (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF) is > 0x80 and < 0xF0
                 && (Platform.WindowMaterial.TintArgb("acrylic", false) >> 24 & 0xFF) is > 0x60 and < 0xF0
                 && (Platform.WindowMaterial.TintArgb("classic", false) >> 24 & 0xFF) == 0xFF);
-            Check("媒体页样式：Normalize 保留 d（卡片式）",
-                ConfigStore.Normalize(new AppConfig { MediaStyle = "d" }).MediaStyle == "d");
+            Check("媒体页样式：Normalize 只认 a/b/c（卡片 D 已按用户要求移除）",
+                ConfigStore.Normalize(new AppConfig { MediaStyle = "d" }).MediaStyle == "a");
             {
-                // 卡片式（d）：传输键一行在上，进度条在下且两端带时间——这是用户给的参考形式，
-                // 用布局矩形钉住，避免以后调位置把它调回"进度条在上"
-                using var dMedia = new MediaSessionService();
-                var dApp = new NativeIslandApp(new AppConfig { MediaStyle = "d" }, dMedia);
+                // 进度条两端要留出时间文本的位置：条的左右各留 ≥52（时间画在条的两侧）
+                using var m3 = new MediaSessionService();
+                var app3 = new NativeIslandApp(new AppConfig(), m3);
                 var panel = new SKRect(0, 0, (float)NativeIslandApp.BaseExpandedW, (float)NativeIslandApp.BaseExpandedH);
-                var dch = dApp.ChromeFor(panel, 1f);
-                Check("媒体页样式 D：控制行在上、进度条在下（两端时间同一行）",
-                    dch.Seek.Top > dch.Play.Bottom && dch.TimesY > dch.Seek.Top - 4
-                    && dch.Prev.Left < dch.Play.Left && dch.Play.Right < dch.Next.Left);
-                bool inside = dch.Cover.Left >= panel.Left && dch.Cover.Top >= panel.Top
-                    && dch.Cover.Bottom <= panel.Bottom
-                    && dch.Seek.Right <= panel.Right && dch.Seek.Left >= panel.Left
-                    && dch.Next.Right <= panel.Right && dch.VolTrack.Right <= panel.Right
-                    && dch.Play.Top >= panel.Top && dch.Play.Bottom <= panel.Bottom;
-                Check("媒体页样式 D：各矩形不越出岛体", inside);
+                var ch3 = app3.ChromeFor(panel, 1f);
+                Check("媒体页：进度条为两端时间让位（左右各留 ≥52）",
+                    ch3.Seek.Left - panel.Left >= 52 && panel.Right - ch3.Seek.Right >= 52
+                    && ch3.Play.Left < ch3.Play.Right && ch3.Prev.Left < ch3.Play.Left,
+                    $"left={ch3.Seek.Left - panel.Left:0} right={panel.Right - ch3.Seek.Right:0}");
             }
+            // 展开面板自动回缩：可配置 + 光标在岛上不收（分层窗 WM_MOUSELEAVE 会偶发）
+            var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            Check("自动回缩：配置 0 表示永不自动收起",
+                !NativeIslandApp.ShouldAutoCollapse(0, false, false, t0, t0.AddSeconds(60)));
+            Check("自动回缩：鼠标还在岛上 / 光标仍在岛内 都不收",
+                !NativeIslandApp.ShouldAutoCollapse(900, true, false, t0, t0.AddSeconds(60))
+                && !NativeIslandApp.ShouldAutoCollapse(900, false, true, t0, t0.AddSeconds(60)));
+            Check("自动回缩：离开超时才收（时长可配）",
+                NativeIslandApp.ShouldAutoCollapse(900, false, false, t0, t0.AddSeconds(2))
+                && !NativeIslandApp.ShouldAutoCollapse(900, false, false, t0, t0.AddMilliseconds(800))
+                && !NativeIslandApp.ShouldAutoCollapse(900, false, false, null, t0.AddSeconds(9)));
+            Check("自动回缩：Normalize 钳到 0–10000（默认 900）",
+                ConfigStore.Normalize(new AppConfig { AutoCollapseMs = 99999 }).AutoCollapseMs == 900
+                && ConfigStore.Normalize(new AppConfig { AutoCollapseMs = -5 }).AutoCollapseMs == 900
+                && ConfigStore.Normalize(new AppConfig { AutoCollapseMs = 0 }).AutoCollapseMs == 0
+                && ConfigStore.Normalize(new AppConfig { AutoCollapseMs = 2500 }).AutoCollapseMs == 2500);
             Check("媒体页标题：短标题单行、长标题两行且第二行带省略号",
                 NativeIslandApp.WrapTwoLines("夜曲", 300, 18, SKFontStyleWeight.SemiBold).Length == 1
                 && NativeIslandApp.WrapTwoLines(new string('长', 40), 100, 18, SKFontStyleWeight.SemiBold)

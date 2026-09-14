@@ -85,6 +85,10 @@ public sealed class AppConfig
     /// <summary>闲置自动隐藏：无媒体且鼠标离开 10 秒后收起岛，光标压到屏幕顶部恢复。</summary>
     public bool AutoHide { get; set; }
     /// <summary>
+    /// 展开面板自动回缩：鼠标离开岛多久后收起（毫秒，0 = 不自动回缩，默认 900）。
+    /// </summary>
+    public int AutoCollapseMs { get; set; } = 900;
+    /// <summary>
     /// 展开媒体页样式：a=精修（默认，结构同旧版、质感重做）/ b=沉浸（封面模糊铺满 + 玻璃控制条）/
     /// c=氛围海报（封面取色双光斑 + 大标题）。设置窗口「媒体页」可实时切换。
     /// </summary>
@@ -172,7 +176,8 @@ public static class ConfigStore
             cfg.CompositeClock = true;
         if (cfg.LyricDelayMs is < -3000 or > 3000) cfg.LyricDelayMs = 0;
         if (cfg.Opacity is < 40 or > 100) cfg.Opacity = 100;
-        if (cfg.MediaStyle is not ("a" or "b" or "c" or "d")) cfg.MediaStyle = "a";
+        if (cfg.MediaStyle is not ("a" or "b" or "c")) cfg.MediaStyle = "a";
+        if (cfg.AutoCollapseMs is < 0 or > 10000) cfg.AutoCollapseMs = 900;
         if (cfg.UiMaterial is not ("acrylic" or "glass" or "classic")) cfg.UiMaterial = "acrylic";
         cfg.Weekdays = cfg.Weekdays.Where(d => d is >= 1 and <= 7).Distinct().OrderBy(x => x).ToList();
         cfg.Dates = cfg.Dates

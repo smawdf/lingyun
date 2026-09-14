@@ -32,6 +32,8 @@ public sealed class SettingsWindow : Window
     private readonly Slider _offsetY = NewSlider(0, 200);
     private readonly Slider _opacity = NewSlider(40, 100);
     private readonly Slider _lyricDelay = NewSlider(-2000, 2000);
+    private readonly Slider _autoCollapse = NewSlider(0, 10000);
+    private readonly TextBlock _autoCollapseLabel = new();
     private readonly TextBlock _compactLabel = new();
     private readonly TextBlock _expandedLabel = new();
     private readonly TextBlock _offsetXLabel = new();
@@ -53,7 +55,6 @@ public sealed class SettingsWindow : Window
     private readonly RadioButton _styleA = new();
     private readonly RadioButton _styleB = new();
     private readonly RadioButton _styleC = new();
-    private readonly RadioButton _styleD = new();
     private readonly RadioButton _matAcrylic = new();
     private readonly RadioButton _matGlass = new();
     private readonly RadioButton _matClassic = new();
@@ -89,6 +90,7 @@ public sealed class SettingsWindow : Window
     private const double ShadowMargin = 16;      // 面板外留给落影的一圈
     private readonly Border _shadowHost = new();
     private readonly Border _tintOverlay = new();
+    private readonly Border _edgeOverlay = new();
     private const double NavW = 196;
 
     public SettingsWindow(AppConfig cfg, NativeIslandApp island, Action save)
@@ -131,6 +133,12 @@ public sealed class SettingsWindow : Window
         var panel = new Grid();
         panel.Children.Add(_tintOverlay);
         panel.Children.Add(BuildLayout());
+        // 包围线放最上层：Border 自己的描边画在子元素**下面**，会被内容和色调层盖住，
+        // 所以单独用一个只描边的 Border 盖上来（不吃鼠标事件，拖动照旧）
+        _edgeOverlay.IsHitTestVisible = false;
+        _edgeOverlay.Background = null;
+        _edgeOverlay.BorderThickness = new Thickness(1);
+        panel.Children.Add(_edgeOverlay);
         _shell.Child = panel;
         // 拖动：空白处随便拖（原来的标题条只有 26px 高，用户的感觉就是"有的地方能拖有的地方不能"）
         _shell.MouseLeftButtonDown += (_, e) =>
@@ -398,15 +406,11 @@ public sealed class SettingsWindow : Window
         _themeLight.Checked += (_, _) => SetTheme("light");
         _themeSystem.Checked += (_, _) => SetTheme("system");
         _themeLiquidGlass.Checked += (_, _) => SetTheme("liquid-glass");
-        AddRadioRow(card, "媒体页", new[]
-        {
-            ("A · 精修", _styleA), ("B · 沉浸", _styleB),
-            ("C · 氛围", _styleC), ("D · 卡片", _styleD),
-        }, "mediastyle");
+        AddRadioRow(card, "媒体页", new[] { ("A · 精修", _styleA), ("B · 沉浸", _styleB), ("C · 氛围", _styleC) },
+            "mediastyle");
         _styleA.Checked += (_, _) => SetMediaStyle("a");
         _styleB.Checked += (_, _) => SetMediaStyle("b");
         _styleC.Checked += (_, _) => SetMediaStyle("c");
-        _styleD.Checked += (_, _) => SetMediaStyle("d");
         AddCheck(card, _glassAdaptive, "液态玻璃自适应",
             "按岛背后桌面明暗自动切浅色玻璃（深字）/ 深色玻璃（白字），每秒采样一次（约 0.5% 单核）",
             v => { _cfg.GlassAdaptive = v; _island.ApplyConfig(); });
@@ -452,6 +456,13 @@ public sealed class SettingsWindow : Window
             _offsetYLabel.Text = $"  {v:0}px";
             _island.ApplyGeometry();
         });
+        AddSlider(card, "自动回缩", _autoCollapse, _autoCollapseLabel, v =>
+        {
+            _cfg.AutoCollapseMs = (int)v;
+            _autoCollapseLabel.Text = v <= 0 ? "  不自动回缩" : $"  离开 {v / 1000.0:0.0}s 后";
+            _island.ApplyConfig();
+        });
+        AddHint(root, "展开面板在鼠标离开岛后多久自动收起；调到最左（0）就永不自动收起，点空白处仍然可以手动收起。");
 
         AddGroupLabel(root, "显示器");
         card = NewCard(root);
@@ -613,6 +624,10 @@ public sealed class SettingsWindow : Window
         // 面板外观：圆角 / 落影 / 色调 / 背景模糊——全部我们自己画（分层窗的代价与自由）
         double radius = WindowMaterial.Radius(material);
         _shell.CornerRadius = new CornerRadius(radius);
+        _edgeOverlay.CornerRadius = new CornerRadius(radius);
+        _edgeOverlay.BorderBrush = new SolidColorBrush(C(material == "classic"
+            ? (_dark ? "#4a4a4a" : "#909090")
+            : (_dark ? "#3dffffff" : "#38000000")));
         _shell.BorderBrush = new SolidColorBrush(C(material == "classic"
             ? (_dark ? "#4a4a4a" : "#909090")
             : (_dark ? "#33ffffff" : "#2effffff")));
@@ -839,10 +854,9 @@ public sealed class SettingsWindow : Window
         _themeLight.IsChecked = string.Equals(_cfg.Theme, "light", StringComparison.OrdinalIgnoreCase);
         _themeSystem.IsChecked = string.Equals(_cfg.Theme, "system", StringComparison.OrdinalIgnoreCase);
         _themeLiquidGlass.IsChecked = IslandPalette.IsLiquidGlass(_cfg.Theme);
-        _styleA.IsChecked = _cfg.MediaStyle is not ("b" or "c" or "d");
+        _styleA.IsChecked = _cfg.MediaStyle != "b" && _cfg.MediaStyle != "c";
         _styleB.IsChecked = _cfg.MediaStyle == "b";
         _styleC.IsChecked = _cfg.MediaStyle == "c";
-        _styleD.IsChecked = _cfg.MediaStyle == "d";
         _glassAdaptive.IsChecked = _cfg.GlassAdaptive;
 
         _opacity.Value = _cfg.Opacity;
@@ -855,6 +869,9 @@ public sealed class SettingsWindow : Window
         _expanded.Value = (int)Math.Round(_cfg.ExpandedScale * 100);
         _offsetX.Value = _cfg.OffsetX;
         _offsetY.Value = _cfg.OffsetY;
+        _autoCollapse.Value = Math.Clamp(_cfg.AutoCollapseMs, 0, 10000);
+        _autoCollapseLabel.Text = _cfg.AutoCollapseMs <= 0
+            ? "  不自动回缩" : $"  离开 {_cfg.AutoCollapseMs / 1000.0:0.0}s 后";
 
         _perfNetwork.IsChecked = _cfg.PerfNetwork;
         _composite.IsChecked = _cfg.Composite;
@@ -914,6 +931,7 @@ public sealed class SettingsWindow : Window
         _expanded.Value = 100;
         _offsetX.Value = 0;
         _offsetY.Value = 8;
+        _autoCollapse.Value = 900;
         _opacity.Value = 100;
         _lyricDelay.Value = 0;
         _composite.IsChecked = false;
