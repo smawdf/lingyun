@@ -1421,7 +1421,7 @@ public sealed class NativeIslandApp : IDisposable
     /// 返回总宽与各模块槽位（基准像素，未乘缩放）。
     /// </summary>
     internal static (double Total, (double X, double W)[] Slots) CompositeLayout(
-        bool clock, bool hw, bool media, float clockW, float hwW, float mediaW)
+        bool clock, bool hw, bool net, bool media, float clockW, float hwW, float netW, float mediaW)
     {
         var slots = new List<(double X, double W)>();
         double x = CompositeLeftPad;
@@ -1432,16 +1432,17 @@ public sealed class NativeIslandApp : IDisposable
         }
         if (clock) Add(clockW);
         if (hw) Add(hwW);
+        if (net) Add(netW);
         if (media) Add(mediaW);
         if (slots.Count == 0) return (0, Array.Empty<(double X, double W)>());
         return (x - CompositeGap + CompositeRightPad, slots.ToArray());
     }
 
     /// <summary>组合模式目标宽度（基准像素 × 缩放）：clamp 220–900；三模块全关时退回时钟胶囊宽。</summary>
-    internal static double CompositeWidth(bool clock, bool hw, bool media,
-        float clockW, float hwW, float mediaW, double scale)
+    internal static double CompositeWidth(bool clock, bool hw, bool net, bool media,
+        float clockW, float hwW, float netW, float mediaW, double scale)
     {
-        var (total, _) = CompositeLayout(clock, hw, media, clockW, hwW, mediaW);
+        var (total, _) = CompositeLayout(clock, hw, net, media, clockW, hwW, netW, mediaW);
         if (total <= 0) return CompactW0 * scale;
         return Math.Clamp(total, CompositeMinW, CompositeMaxW) * scale;
     }
@@ -1459,6 +1460,13 @@ public sealed class NativeIslandApp : IDisposable
                     MeasureText("99月99日 周九", 10, SKFontStyleWeight.Medium))));
 
     /// <summary>组合模式硬件槽宽（基准像素）：标签 + 进度条 + 按「100%」定宽的百分比槽。</summary>
+    /// <summary>组合模式网速槽宽（基准像素）：标签 ↓/↑ + 定宽数值（按 "999.9 MB/s" 预留 → 数字跳动不抖）。</summary>
+    internal static float CompositeNetW()
+    {
+        float tag = Math.Max(MeasureText("↓", CompHwTagSize), MeasureText("↑", CompHwTagSize));
+        return tag + 5 + MeasureText("999.9 MB/s", CompHwPctSize);
+    }
+
     internal static float CompositeHwW()
     {
         float tag = Math.Max(MeasureText("CPU", CompHwTagSize), MeasureText("内存", CompHwTagSize));
@@ -1505,9 +1513,9 @@ public sealed class NativeIslandApp : IDisposable
 
     /// <summary>组合模式目标宽度（含 CompactScale 缩放）。</summary>
     private double CompositeTargetW()
-        => CompositeWidth(_cfg.CompositeClock, _cfg.CompositeHardware,
+        => CompositeWidth(_cfg.CompositeClock, _cfg.CompositeHardware, _cfg.CompositeNetwork,
             _cfg.CompositeMedia && MediaActive,
-            CompactClockSlotW(), CompositeHwW(), CompositeMediaW(), _cfg.CompactScale);
+            CompactClockSlotW(), CompositeHwW(), CompositeNetW(), CompositeMediaW(), _cfg.CompactScale);
 
     /// <summary>
     /// 媒体焦点维护（每拍调用）。规则：
@@ -2061,8 +2069,8 @@ public sealed class NativeIslandApp : IDisposable
         // 模块与内容一起随「胶囊大小」缩放：否则 1.4x 时岛变宽、内容还按原尺寸，右侧留一大片空白
         float cs = CompactContentScale(s);
         bool media = _cfg.CompositeMedia && MediaActive;
-        var (total, slots) = CompositeLayout(_cfg.CompositeClock, _cfg.CompositeHardware,
-            media, CompactClockSlotW(), CompositeHwW(), CompositeMediaW());
+        var (total, slots) = CompositeLayout(_cfg.CompositeClock, _cfg.CompositeHardware, _cfg.CompositeNetwork,
+            media, CompactClockSlotW(), CompositeHwW(), CompositeNetW(), CompositeMediaW());
         if (slots.Length == 0 || total <= 0)
         {
             // 兜底：三个模块全关（Normalize 会拦住，这里防御性退回时钟）
@@ -2072,6 +2080,7 @@ public sealed class NativeIslandApp : IDisposable
         int i = 0;
         if (_cfg.CompositeClock) DrawCompositeClock(canvas, SlotRect(r, slots[i++], cs), cs);
         if (_cfg.CompositeHardware) DrawCompositeHardware(canvas, SlotRect(r, slots[i++], cs), cs);
+        if (_cfg.CompositeNetwork) DrawCompositeNetwork(canvas, SlotRect(r, slots[i++], cs), cs);
         if (media) DrawCompositeMedia(canvas, SlotRect(r, slots[i], cs), cs);
         // 模块间细分隔线（对齐设计提案：分隔线代替纯间距）
         for (int g = 0; g < slots.Length - 1; g++)
@@ -2115,6 +2124,25 @@ public sealed class NativeIslandApp : IDisposable
         double mem = _perf?.MemPct ?? 0;
         DrawHwRow(canvas, slot, s, slot.MidY - 9 * s, "CPU", cpu, Pal.Accent);
         DrawHwRow(canvas, slot, s, slot.MidY + 10 * s, "内存", mem, Pal.Sub);
+    }
+
+    /// <summary>组合模式·网速模块：↓/↑ 两行，数值定宽（跳字时宽度不抖）。</summary>
+    private void DrawCompositeNetwork(SKCanvas canvas, SKRect slot, float s)
+    {
+        double down = _perf?.NetKbps ?? 0;
+        double up = _perf?.UploadKbps ?? 0;
+        DrawNetRow(canvas, slot, s, slot.MidY - 9 * s, "↓", down);
+        DrawNetRow(canvas, slot, s, slot.MidY + 10 * s, "↑", up);
+    }
+
+    private void DrawNetRow(SKCanvas canvas, SKRect slot, float s, float cy, string tag, double kbps)
+    {
+        float tagSize = CompHwTagSize * s;
+        DrawText(canvas, tag, slot.Left, cy + 3.5f * s, tagSize, Pal.Sub);
+        float tagW = MeasureText(tag, tagSize);
+        string text = FmtRate(kbps);
+        float size = CompHwPctSize * s;
+        DrawText(canvas, text, slot.Left + tagW + 5 * s, cy + 3.5f * s, size, Pal.Fg);
     }
 
     private void DrawHwRow(SKCanvas canvas, SKRect slot, float s, float cy, string tag,

@@ -66,6 +66,8 @@ public sealed class AppConfig
     public bool CompositeHardware { get; set; } = true;
     /// <summary>组合模式模块：媒体（封面 + 歌词/标题 + 频谱；无会话时不显示）。</summary>
     public bool CompositeMedia { get; set; } = true;
+    /// <summary>组合模式模块：实时网速（↓ 下载 / ↑ 上传，每秒采样一次）。默认关。</summary>
+    public bool CompositeNetwork { get; set; }
     /// <summary>歌词卡拉OK逐字：当前句按播放进度从左到右点亮（关掉则整句一个颜色）。</summary>
     public bool LyricsKaraoke { get; set; } = true;
     /// <summary>歌词延迟补偿（毫秒，正 = 歌词提前）：显示器/音频链路有延迟时手动校准。</summary>
@@ -181,7 +183,8 @@ public static class ConfigStore
         if (cfg.Action is not ("shutdown" or "lock" or "display_off" or "pause_media"))
             cfg.Action = "shutdown";
         // 组合模式三个模块全关等于只剩一个空壳，强制留时间
-        if (cfg.Composite && !cfg.CompositeClock && !cfg.CompositeHardware && !cfg.CompositeMedia)
+        if (cfg.Composite && !cfg.CompositeClock && !cfg.CompositeHardware
+            && !cfg.CompositeMedia && !cfg.CompositeNetwork)
             cfg.CompositeClock = true;
         if (cfg.LyricDelayMs is < -3000 or > 3000) cfg.LyricDelayMs = 0;
         if (cfg.Opacity is < 40 or > 100) cfg.Opacity = 100;

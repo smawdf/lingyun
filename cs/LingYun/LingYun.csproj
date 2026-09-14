@@ -10,6 +10,7 @@
     <AssemblyName>lingyun</AssemblyName>
     <RootNamespace>LingYun</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\lingyun.ico</ApplicationIcon>
     <Version>5.1.0</Version>
   </PropertyGroup>
 
@@ -24,6 +25,8 @@
     <None Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
     <!-- 站标同时内嵌：单文件 exe 被单独拷走（如仓库根只放 exe）时也能显示 -->
     <EmbeddedResource Include="Assets\**\*" />
+    <!-- 标题栏/侧栏用：WPF 资源（pack URI 直接取） -->
+    <Resource Include="Assets\lingyun.ico" />
   </ItemGroup>
 
 </Project>
