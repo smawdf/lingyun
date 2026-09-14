@@ -73,12 +73,22 @@ def main():
     if "--base" in sys.argv:
         base = sys.argv[sys.argv.index("--base") + 1]
 
-    changed = []
-    out = git("diff", "--name-status", "--no-renames", base or f"origin/{branch}", commit)
-    for line in out.splitlines():
-        parts = line.split("\t")
-        if len(parts) == 2:
-            changed.append((parts[0], parts[1]))
+    # 变更清单直接和**远端真实树**逐文件比 blob 哈希，不和本地 origin/* 比：
+    # 本机 github.com:443 时通时断，fetch 失败后本地引用会停在旧位置，会漏文件（踩过一次）。
+    ref = api("GET", f"/repos/{repo}/git/ref/heads/{branch}", token)
+    remote_head = ref["object"]["sha"]
+    remote_tree = {
+        e["path"]: e["sha"]
+        for e in api("GET", f"/repos/{repo}/git/trees/{remote_head}?recursive=1", token)["tree"]
+        if e["type"] == "blob"
+    }
+    local_tree = {}
+    for line in git("ls-tree", "-r", commit).splitlines():
+        meta, path = line.split("\t", 1)
+        local_tree[path.strip('"')] = meta.split()[2]
+
+    changed = [("M", path) for path, sha in local_tree.items() if remote_tree.get(path) != sha]
+    changed += [("D", path) for path in remote_tree if path not in local_tree]
     if not changed:
         print("没有差异，远端已是最新")
         return
@@ -87,8 +97,7 @@ def main():
         head_sha = git("rev-parse", base)
         force = True
     else:
-        ref = api("GET", f"/repos/{repo}/git/ref/heads/{branch}", token)
-        head_sha = ref["object"]["sha"]
+        head_sha = remote_head
         force = False
     base_tree = api("GET", f"/repos/{repo}/git/commits/{head_sha}", token)["tree"]["sha"]
     print(f"基点 {head_sha[:8]}，基线 tree = {base_tree[:8]}{'（将强制更新 ref）' if force else ''}")
