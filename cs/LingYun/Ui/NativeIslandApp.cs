@@ -2089,7 +2089,7 @@ public sealed class NativeIslandApp : IDisposable
     }
 
     /// <summary>当前展开媒体页样式（Normalize 保证只可能是 a/b/c）。</summary>
-    private string MediaStyleKey => _cfg.MediaStyle is "b" or "c" ? _cfg.MediaStyle : "a";
+    private string MediaStyleKey => _cfg.MediaStyle is "b" or "c" or "d" ? _cfg.MediaStyle : "a";
 
     /// <summary>
     /// 展开媒体页的一套控件矩形与排版参数（绘制与命中测试共用，按 <c>media_style</c> 计算）。
@@ -2105,8 +2105,9 @@ public sealed class NativeIslandApp : IDisposable
         SKRect BgBar, SKRect Home, SKRect VolGlyph, SKRect VolTrack,
         SKRect Prev, SKRect Play, SKRect Next, float PlayRadius);
 
-    /// <summary>按样式计算媒体页布局。绘制与命中都必须从这里取矩形。</summary>
-    private MediaChrome ChromeFor(SKRect r, float s)
+    /// <summary>按样式计算媒体页布局。绘制与命中都必须从这里取矩形。
+    /// internal 供自测断言（与 PerfLayout / CalLayout 同一类钩子）。</summary>
+    internal MediaChrome ChromeFor(SKRect r, float s)
     {
         float L = r.Left, T = r.Top, R = r.Right, B = r.Bottom;
         switch (MediaStyleKey)
@@ -2152,6 +2153,29 @@ public sealed class NativeIslandApp : IDisposable
                     Play: new SKRect(L + 208 * s, B - 62 * s, L + 252 * s, B - 18 * s),
                     Next: new SKRect(L + 277 * s, B - 57 * s, L + 311 * s, B - 23 * s),
                     PlayRadius: 22 * s);
+            }
+            case "d":   // 卡片式（对齐 iOS/Apple Music 卡片）：大封面 + 大标题，
+                        // 传输键一行居中，进度条在下、两端带时间（参考用户给的样式）
+            {
+                float cy = T + 206 * s;                       // 传输键一行
+                return new MediaChrome(
+                    Cover: new SKRect(L + 24 * s, T + 20 * s, L + 128 * s, T + 124 * s), 24 * s, 0f,
+                    TitleBox: new SKRect(L + 146 * s, T + 30 * s, R - 52 * s, T + 100 * s),
+                    23 * s, true, T + 60 * s, T + 90 * s, T + 114 * s, 13 * s,
+                    SrcChip: ChipRightAt(R - 52 * s, T + 12 * s, 24 * s, s),
+                    // 进度条夹在两端时间之间（时间在条的两侧，不是条下面）
+                    Seek: new SKRect(L + 78 * s, T + 242 * s, R - 78 * s, T + 262 * s),
+                    TimesY: T + 256 * s,
+                    LyrBox: new SKRect(L + 24 * s, T + 134 * s, R - 24 * s, T + 182 * s),
+                    LyrCurY: T + 152 * s, LyrNextY: T + 174 * s, LyrCurSize: 14 * s, LyrNextSize: 11.5f * s, LyrLeft: true,
+                    BgBar: SKRect.Empty,
+                    Home: new SKRect(L + 22 * s, B - 46 * s, L + 98 * s, B - 20 * s),
+                    VolGlyph: new SKRect(R - 136 * s, B - 42 * s, R - 112 * s, B - 18 * s),
+                    VolTrack: new SKRect(R - 104 * s, B - 29 * s, R - 34 * s, B - 25 * s),
+                    Prev: new SKRect(r.MidX - 106 * s, cy - 18 * s, r.MidX - 70 * s, cy + 18 * s),
+                    Play: new SKRect(r.MidX - 26 * s, cy - 26 * s, r.MidX + 26 * s, cy + 26 * s),
+                    Next: new SKRect(r.MidX + 70 * s, cy - 18 * s, r.MidX + 106 * s, cy + 18 * s),
+                    PlayRadius: 0f);                          // 0 = 不要圆底，画纯三角（对齐参考图）
             }
             default:    // a 精修：结构同旧版（左封面/中进度/底传输），质感重做
             {
@@ -2455,6 +2479,18 @@ public sealed class NativeIslandApp : IDisposable
     {
         var st = _media.State;
         DrawArtStyled(canvas, ch.Cover, ch.CoverRadius, s, ch.CoverTiltDeg, shadow: MediaStyleKey != "a");
+        if (MediaStyleKey == "d")
+        {
+            // 卡片式：封面右下角贴一枚应用小方块（参考图里那颗音乐角标）
+            float bs = 26 * s;
+            var badge = new SKRect(ch.Cover.Right - bs * 0.72f, ch.Cover.Bottom - bs * 0.72f,
+                                   ch.Cover.Right + bs * 0.28f, ch.Cover.Bottom + bs * 0.28f);
+            DrawMaterialSurface(canvas, badge, 7 * s, Pal.Card);
+            var icon = IconBitmap(st.AppId);
+            if (icon is not null)
+                canvas.DrawBitmap(icon, new SKRect(badge.Left + 4 * s, badge.Top + 4 * s,
+                                                   badge.Right - 4 * s, badge.Bottom - 4 * s));
+        }
         string title = string.IsNullOrWhiteSpace(st.Title) ? "未知" : st.Title;
         if (ch.TwoLineTitle)
         {
@@ -2558,6 +2594,14 @@ public sealed class NativeIslandApp : IDisposable
     {
         var st = _media.State;
         if (st.DurationMs <= 0) return;
+        if (MediaStyleKey == "d")
+        {
+            // 卡片式：已播时间在条左、总时长在条右（参考图是 02:58 / 04:23 这种）
+            DrawText(canvas, Fmt(st.PositionMs), ch.LyrBox.Left - 54 * s, ch.TimesY, 11.5f * s, Pal.Sub);
+            string total = Fmt(st.DurationMs);
+            DrawText(canvas, total, ch.Seek.Right + 54 * s - MeasureText(total, 11.5f * s), ch.TimesY, 11.5f * s, Pal.Dim);
+            return;
+        }
         DrawText(canvas, Fmt(st.PositionMs), ch.Seek.Left, ch.TimesY, 11 * s, Pal.Sub);
         string neg = "-" + Fmt(st.DurationMs - st.PositionMs);
         DrawText(canvas, neg, ch.Seek.Right - MeasureText(neg, 11 * s), ch.TimesY, 11 * s, Pal.Dim);
@@ -2573,8 +2617,16 @@ public sealed class NativeIslandApp : IDisposable
             // B 沉浸：玻璃控制条（与公共材质同源，透明度可实时调节）
             DrawMaterialSurface(canvas, ch.BgBar, 17 * s, Pal.Card);
         }
-        DrawSkipGlyph(canvas, ch.Prev.MidX, ch.Prev.MidY, 15 * s, next: false, Pal.Fg);
-        DrawSkipGlyph(canvas, ch.Next.MidX, ch.Next.MidY, 15 * s, next: true, Pal.Fg);
+        DrawSkipGlyph(canvas, ch.Prev.MidX, ch.Prev.MidY, MediaStyleKey == "d" ? 17 * s : 15 * s, next: false, Pal.Fg);
+        DrawSkipGlyph(canvas, ch.Next.MidX, ch.Next.MidY, MediaStyleKey == "d" ? 17 * s : 15 * s, next: true, Pal.Fg);
+        if (MediaStyleKey == "d" && ch.PlayRadius <= 0)
+        {
+            // 卡片式：播放键就是一枚实心三角（对齐参考图，没有圆底）
+            DrawPlayPauseGlyph(canvas, ch.Play.MidX, ch.Play.MidY, 26 * s, st.IsPlaying, Pal.Fg);
+            DrawHomeChip(canvas, ch, s);
+            DrawVolumeRow(canvas, ch, s);
+            return;
+        }
         // 主播放钮：圆形底 + 柔和投影（深色白底黑标 / 浅色墨底白标）
         using (var sh = new SKPaint
         {

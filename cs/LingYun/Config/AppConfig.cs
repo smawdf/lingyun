@@ -172,7 +172,7 @@ public static class ConfigStore
             cfg.CompositeClock = true;
         if (cfg.LyricDelayMs is < -3000 or > 3000) cfg.LyricDelayMs = 0;
         if (cfg.Opacity is < 40 or > 100) cfg.Opacity = 100;
-        if (cfg.MediaStyle is not ("a" or "b" or "c")) cfg.MediaStyle = "a";
+        if (cfg.MediaStyle is not ("a" or "b" or "c" or "d")) cfg.MediaStyle = "a";
         if (cfg.UiMaterial is not ("acrylic" or "glass" or "classic")) cfg.UiMaterial = "acrylic";
         cfg.Weekdays = cfg.Weekdays.Where(d => d is >= 1 and <= 7).Distinct().OrderBy(x => x).ToList();
         cfg.Dates = cfg.Dates

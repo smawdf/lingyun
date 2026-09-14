@@ -53,6 +53,7 @@ public sealed class SettingsWindow : Window
     private readonly RadioButton _styleA = new();
     private readonly RadioButton _styleB = new();
     private readonly RadioButton _styleC = new();
+    private readonly RadioButton _styleD = new();
     private readonly RadioButton _matAcrylic = new();
     private readonly RadioButton _matGlass = new();
     private readonly RadioButton _matClassic = new();
@@ -193,7 +194,10 @@ public sealed class SettingsWindow : Window
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Padding = new Thickness(0),
+            Background = Brushes.Transparent,   // 默认控件会画一条浅色轨道，和面板不搭
         };
+        // 右侧滚动条做成细的浮层样式：轨道透明、滑块是半透明圆角条、没有上下箭头
+        scroll.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = MakeThinScrollBarStyle();
         _panes.Margin = new Thickness(22, 6, 22, 22);
         scroll.Content = _panes;
         Grid.SetColumn(scroll, 1);
@@ -394,11 +398,15 @@ public sealed class SettingsWindow : Window
         _themeLight.Checked += (_, _) => SetTheme("light");
         _themeSystem.Checked += (_, _) => SetTheme("system");
         _themeLiquidGlass.Checked += (_, _) => SetTheme("liquid-glass");
-        AddRadioRow(card, "媒体页", new[] { ("A · 精修", _styleA), ("B · 沉浸", _styleB), ("C · 氛围", _styleC) },
-            "mediastyle");
+        AddRadioRow(card, "媒体页", new[]
+        {
+            ("A · 精修", _styleA), ("B · 沉浸", _styleB),
+            ("C · 氛围", _styleC), ("D · 卡片", _styleD),
+        }, "mediastyle");
         _styleA.Checked += (_, _) => SetMediaStyle("a");
         _styleB.Checked += (_, _) => SetMediaStyle("b");
         _styleC.Checked += (_, _) => SetMediaStyle("c");
+        _styleD.Checked += (_, _) => SetMediaStyle("d");
         AddCheck(card, _glassAdaptive, "液态玻璃自适应",
             "按岛背后桌面明暗自动切浅色玻璃（深字）/ 深色玻璃（白字），每秒采样一次（约 0.5% 单核）",
             v => { _cfg.GlassAdaptive = v; _island.ApplyConfig(); });
@@ -650,6 +658,44 @@ public sealed class SettingsWindow : Window
         // 面板贴满窗口后，圆角靠窗口区域保证（模糊层也一起被裁掉）
     }
 
+    /// <summary>
+    /// 细滚动条样式：轨道透明、滑块是圆角半透明条、没有两端箭头。
+    /// 用 XAML 字符串解析而不是 FrameworkElementFactory——Track 的滑块是属性元素
+    /// （Track.Thumb），工厂方式既没有对应 DP 也不能 AppendChild，会直接抛。
+    /// 颜色在重建时烤进模板（模板里的刷子会被 WPF 冻结，不能引用共享实例）。
+    /// </summary>
+    private Style MakeThinScrollBarStyle()
+    {
+        string thumb = _dark ? "#50FFFFFF" : "#46404858";
+        string xaml = $@"
+<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+       xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
+       TargetType='ScrollBar'>
+  <Setter Property='Width' Value='10'/>
+  <Setter Property='Background' Value='Transparent'/>
+  <Setter Property='Template'>
+    <Setter.Value>
+      <ControlTemplate TargetType='ScrollBar'>
+        <Grid Background='Transparent'>
+          <Track x:Name='PART_Track' IsDirectionReversed='True' Margin='2,0,2,0'>
+            <Track.Thumb>
+              <Thumb>
+                <Thumb.Template>
+                  <ControlTemplate TargetType='Thumb'>
+                    <Border CornerRadius='3' Width='6' Background='{thumb}'/>
+                  </ControlTemplate>
+                </Thumb.Template>
+              </Thumb>
+            </Track.Thumb>
+          </Track>
+        </Grid>
+      </ControlTemplate>
+    </Setter.Value>
+  </Setter>
+</Style>";
+        return (Style)System.Windows.Markup.XamlReader.Parse(xaml);
+    }
+
     /// <summary>点在控件上就别拖窗（按钮/开关/滑杆/滚动条要自己收事件）。</summary>
     private static bool IsInteractive(DependencyObject? src)
     {
@@ -793,9 +839,10 @@ public sealed class SettingsWindow : Window
         _themeLight.IsChecked = string.Equals(_cfg.Theme, "light", StringComparison.OrdinalIgnoreCase);
         _themeSystem.IsChecked = string.Equals(_cfg.Theme, "system", StringComparison.OrdinalIgnoreCase);
         _themeLiquidGlass.IsChecked = IslandPalette.IsLiquidGlass(_cfg.Theme);
-        _styleA.IsChecked = _cfg.MediaStyle != "b" && _cfg.MediaStyle != "c";
+        _styleA.IsChecked = _cfg.MediaStyle is not ("b" or "c" or "d");
         _styleB.IsChecked = _cfg.MediaStyle == "b";
         _styleC.IsChecked = _cfg.MediaStyle == "c";
+        _styleD.IsChecked = _cfg.MediaStyle == "d";
         _glassAdaptive.IsChecked = _cfg.GlassAdaptive;
 
         _opacity.Value = _cfg.Opacity;
