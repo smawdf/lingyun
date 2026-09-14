@@ -111,6 +111,12 @@ public sealed class SettingsWindow : Window
         _shell.Margin = new Thickness(0);
         _shell.BorderThickness = new Thickness(1);
         _shell.Child = BuildLayout();
+        // 拖动：空白处随便拖（原来的标题条只有 26px 高，用户的感觉就是"有的地方能拖有的地方不能"）
+        _shell.MouseLeftButtonDown += (_, e) =>
+        {
+            if (IsInteractive(e.OriginalSource as DependencyObject)) return;
+            try { DragMove(); } catch { /* 鼠标已释放等场景拖不动就算了 */ }
+        };
         Content = _shell;
 
         ApplyMaterial();     // 先定配色/圆角，控件再按它取色
@@ -121,7 +127,11 @@ public sealed class SettingsWindow : Window
         Closed += (_, _) => { try { _save(); } catch { /* 写盘失败不致命 */ } };
         // DWM 材质必须有 HWND 才能设，SourceInitialized 之后再应用一次
         SourceInitialized += (_, _) => ApplyMaterial();
-        SizeChanged += (_, _) => PlaceBelowIsland();
+        SizeChanged += (_, _) =>
+        {
+            PlaceBelowIsland();
+            WindowMaterial.ApplyRoundedRegion(this, _cfg.UiMaterial == "classic" ? 0 : _shell.CornerRadius.TopLeft);
+        };
         Loaded += (_, _) => PlaceBelowIsland();
     }
 
@@ -539,9 +549,10 @@ public sealed class SettingsWindow : Window
                 _accentSoft.Color = C(_dark ? "#2660cdff" : "#220a72dc");
                 _accentEdge.Color = C(_dark ? "#5560cdff" : "#550a72dc");
                 _shell.CornerRadius = new CornerRadius(20);
+                // 有真模糊托底，玻璃可以做薄：平均 ~57%，能明显透出背景
                 _shell.Background = _dark
-                    ? new LinearGradientBrush(C("#b812141a"), C("#cc0a0b0e"), 90)
-                    : new LinearGradientBrush(C("#c7ffffff"), C("#aef4f7fc"), 90);
+                    ? new LinearGradientBrush(C("#99121419"), C("#a60a0b0e"), 90)
+                    : new LinearGradientBrush(C("#8cffffff"), C("#8cf4f7fc"), 90);
                 _shell.BorderBrush = new SolidColorBrush(C(_dark ? "#2effffff" : "#29ffffff"));
                 break;
             default:   // acrylic
@@ -557,15 +568,15 @@ public sealed class SettingsWindow : Window
                 _accentSoft.Color = C(_dark ? "#2860cdff" : "#1f0a7af0");
                 _accentEdge.Color = C(_dark ? "#5560cdff" : "#550a7af0");
                 _shell.CornerRadius = new CornerRadius(10);
-                // 面板要够厚：系统模糊只让 15% 背景透上来，否则背后是深色窗口时
-                // 面板会变灰、深色文字对比度不稳（和岛那边"浅色材质必须够厚"是同一条结论）
-                _shell.Background = new SolidColorBrush(C(_dark ? "#d91b1c20" : "#d9f2f4f8"));
+                // 亚克力：系统模糊 + 65% 色调（Windows 自己的亚克力也偏实，能看清字）
+                _shell.Background = new SolidColorBrush(C(_dark ? "#a61b1c20" : "#a6f2f4f8"));
                 _shell.BorderBrush = new SolidColorBrush(C(_dark ? "#21ffffff" : "#24000000"));
                 break;
         }
 
         if (_ready || IsInitialized)
         {
+            WindowMaterial.ApplyRoundedRegion(this, material == "classic" ? 0 : _shell.CornerRadius.TopLeft);
             string effective = WindowMaterial.Apply(this, material, _dark);
             _materialHint.Text = material switch
             {
@@ -582,6 +593,23 @@ public sealed class SettingsWindow : Window
     }
 
     private static Color C(string hex) => (Color)ColorConverter.ConvertFromString(hex);
+
+    /// <summary>点在控件上就别拖窗（按钮/开关/滑杆/滚动条要自己收事件）。</summary>
+    private static bool IsInteractive(DependencyObject? src)
+    {
+        while (src is not null)
+        {
+            if (src is System.Windows.Controls.Primitives.ButtonBase
+                or Slider
+                or System.Windows.Controls.Primitives.RangeBase
+                or System.Windows.Controls.Primitives.ScrollBar
+                or System.Windows.Controls.Primitives.Thumb
+                or System.Windows.Controls.Primitives.TextBoxBase)
+                return true;
+            src = System.Windows.Media.VisualTreeHelper.GetParent(src);
+        }
+        return false;
+    }
 
     /// <summary>
     /// 控件的自定义模板（原型里是圆角药丸 / 开关 / 无边框按钮）。
