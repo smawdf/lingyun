@@ -2258,8 +2258,9 @@ public sealed class NativeIslandApp : IDisposable
                     LyrCurY: T + 188 * s, LyrNextY: T + 214 * s, LyrCurSize: 15.5f * s, LyrNextSize: 12.5f * s, LyrLeft: false,
                     BgBar: SKRect.Empty,
                     Home: new SKRect(L + 22 * s, B - 46 * s, L + 98 * s, B - 20 * s),
-                    VolGlyph: new SKRect(L + 306 * s, B - 42 * s, L + 330 * s, B - 18 * s),
-                    VolTrack: VolumePopup(new SKRect(L + 306 * s, B - 42 * s, L + 330 * s, B - 18 * s), s),
+                    // 音量图标贴右缘、与播放键同一水平中心（原位置与下一曲重叠 5px，用户指出）
+                    VolGlyph: new SKRect(R - 46 * s, B - 52 * s, R - 22 * s, B - 28 * s),
+                    VolTrack: VolumePopup(new SKRect(R - 46 * s, B - 52 * s, R - 22 * s, B - 28 * s), s),
                     Prev: new SKRect(L + 149 * s, B - 57 * s, L + 183 * s, B - 23 * s),
                     Play: new SKRect(L + 208 * s, B - 62 * s, L + 252 * s, B - 18 * s),
                     Next: new SKRect(L + 277 * s, B - 57 * s, L + 311 * s, B - 23 * s),
@@ -2278,8 +2279,9 @@ public sealed class NativeIslandApp : IDisposable
                     LyrCurY: T + 200 * s, LyrNextY: T + 226 * s, LyrCurSize: 15 * s, LyrNextSize: 12 * s, LyrLeft: false,
                     BgBar: SKRect.Empty,
                     Home: PanelSwitchRect(r, s),   // 位置沿用旧「⌂ 面板」矩形（诊断冒烟测试也用它）
-                    VolGlyph: new SKRect(L + 308 * s, B - 40 * s, L + 332 * s, B - 16 * s),
-                    VolTrack: VolumePopup(new SKRect(L + 308 * s, B - 40 * s, L + 332 * s, B - 16 * s), s),
+                    // 音量图标贴右缘、与播放键同一水平中心（原位置贴着下一曲且偏低，用户指出）
+                    VolGlyph: new SKRect(R - 46 * s, B - 56 * s, R - 22 * s, B - 32 * s),
+                    VolTrack: VolumePopup(new SKRect(R - 46 * s, B - 56 * s, R - 22 * s, B - 32 * s), s),
                     Prev: new SKRect(L + 143 * s, B - 61 * s, L + 177 * s, B - 27 * s),
                     Play: new SKRect(L + 201 * s, B - 67 * s, L + 247 * s, B - 21 * s),
                     Next: new SKRect(L + 271 * s, B - 61 * s, L + 305 * s, B - 27 * s),

@@ -2105,6 +2105,24 @@ internal static class Diag
                     && NativeIslandApp.VolumeFromY(groove, groove.Top - 500) == 1
                     && NativeIslandApp.VolumeFromY(groove, groove.Bottom + 500) == 0);
             }
+            {
+                // 音量图标位置（用户要求）：贴右缘、与播放键同一水平中心、和下一曲留出间距
+                using var mA = new MediaSessionService();
+                var appA = new NativeIslandApp(new AppConfig { MediaStyle = "a" }, mA);
+                using var mC = new MediaSessionService();
+                var appC = new NativeIslandApp(new AppConfig { MediaStyle = "c" }, mC);
+                var bounds = new SKRect(0, 0, (float)NativeIslandApp.BaseExpandedW, (float)NativeIslandApp.BaseExpandedH);
+                var chA = appA.ChromeFor(bounds, 1f);
+                var chC = appC.ChromeFor(bounds, 1f);
+                Check("媒体页：音量图标与播放键同高、且不挤下一曲（A/C 都要）",
+                    Math.Abs(chA.VolGlyph.MidY - chA.Play.MidY) <= 2
+                    && Math.Abs(chC.VolGlyph.MidY - chC.Play.MidY) <= 2
+                    && chA.VolGlyph.Left - chA.Next.Right >= 60
+                    && chC.VolGlyph.Left - chC.Next.Right >= 60
+                    && bounds.Right - chC.VolGlyph.Right is >= 16 and <= 40,
+                    $"A: glyph={chA.VolGlyph.MidY:0} play={chA.Play.MidY:0} gap={chA.VolGlyph.Left - chA.Next.Right:0}　"
+                    + $"C: glyph={chC.VolGlyph.MidY:0} play={chC.Play.MidY:0} gap={chC.VolGlyph.Left - chC.Next.Right:0}");
+            }
             Check("媒体页：进度条为两端时间让位（左右各留 ≥52）",
                     ch3.Seek.Left - panel.Left >= 52 && panel.Right - ch3.Seek.Right >= 52
                     && ch3.Play.Left < ch3.Play.Right && ch3.Prev.Left < ch3.Play.Left,
