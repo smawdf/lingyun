@@ -132,11 +132,13 @@ internal static class Diag
             {
                 int at = Array.IndexOf(args, "--settings-smoke");
                 int seconds = at + 1 < args.Length && int.TryParse(args[at + 1], out var sec)
-                    && sec is >= 0 and <= 60 ? sec : 0;
+                    && sec is >= 0 and <= 600 ? sec : 0;
                 string material = at + 2 < args.Length
                     && args[at + 2] is "acrylic" or "glass" or "classic" ? args[at + 2] : "";
+                // 可选第三个参数：dark / light（不传就跟随系统），方便真机截图核对深色档
+                string theme = at + 3 < args.Length && args[at + 3] is "dark" or "light" ? args[at + 3] : "system";
 
-                var smokeCfg = new AppConfig { Theme = "system", Composite = true, Opacity = 60 };
+                var smokeCfg = new AppConfig { Theme = theme, BaseTheme = theme, Composite = true, Opacity = 60 };
                 if (material.Length > 0) smokeCfg.Theme = material == "glass" ? "liquid-glass" : smokeCfg.BaseTheme;
                 using var smokeMedia = new MediaSessionService();
                 using var smokeIsland = new NativeIslandApp(smokeCfg, smokeMedia);
