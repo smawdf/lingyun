@@ -18,7 +18,8 @@
 | 单实例 + 命名管道唤出 | `Platform/SingleInstance.cs` | 含 `WindowFocus`（跳源窗口） |
 | 开机自启 | `Platform/AutoStart.cs` | HKCU Run |
 | 托盘 | `Platform/TrayService.cs` | 显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 显示歌词 / 浅色主题 / 开机自启 / 退出 |
-| 岛设置 | `Ui/SettingsWindow.cs` | 主题（深/浅/跟随系统/**液态玻璃**）+ 背景透明度（40–100% 滑杆 + 轻透/半透/不透明三档预设）+ 胶囊/展开缩放 + 位置 + 组合模式 + 性能页网速 + 通知 + 自动隐藏 + 歌词（卡拉OK/延迟）+ 版本号；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
+| 设置窗口材质 | `Platform/WindowMaterial.cs` | Win11 `DWMWA_SYSTEMBACKDROP_TYPE` → Win10 `SetWindowCompositionAttribute` → 纯色，逐级回退（`ResolveBackdrop` 纯函数自测钉住）；圆角/深色标题栏走 DWM 属性 |
+| 岛设置（主页式） | `Ui/SettingsWindow.cs` | 左侧五个分区（外观 / 位置与大小 / 显示内容 / 歌词 / 关于）+ 右侧内容，820×580 固定尺寸；含界面材质三档、岛主题四选一、背景透明度（滑杆 + 三档预设）、胶囊/展开缩放、位置、显示器切换、组合模式与模块、网速、通知、自动隐藏、歌词（卡拉OK/延迟）、自启、诊断入口；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
 | 多显示器 | `Platform/Displays.cs` | 按工作区落位，拔屏自动回退 |
 | 自动隐藏 | `Ui/NativeIslandApp.cs`（`UpdateAutoHide`） | 默认关闭：无媒体且鼠标离开 10s 收起，光标到工作区顶部 4px 或媒体/通知/托盘唤出时恢复 |
 | 系统通知 | `Services/ToastService.cs` | WinRT `UserNotificationListener` 轮询；启动高水位（历史通知不回放）、带 AUMID/Id |
@@ -53,7 +54,7 @@
 B站站标 Always 策略、通知宽度/抢占规则、组合模式槽位与自动长度、卡拉OK进度与延迟补偿、
 性能采样、性能页网速开关、主题解析与不透明度、液态玻璃恒浅色与材质 alpha 单调、
 液态玻璃自适应（深/浅背景选材质、迟滞、白底翻深色、合成色）、透明底离屏 alpha 与深色材质白字、
-自动隐藏谓词等，共 166 条）。
+自动隐藏谓词、设置窗口材质三档与系统版本回退链等，共 170 条）。
 
 ## 构建 / 运行
 
@@ -77,10 +78,11 @@ Copy-Item -Force publish\lingyun.exe ..\..\lingyun.exe
 ## 诊断
 
 ```powershell
-lingyun.exe --self-test          # 166 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质/自适应与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
+lingyun.exe --self-test          # 170 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质/自适应与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
 lingyun.exe --self-test --diag-quick   # 自测 + 快捷页契约报告（写 灵云-diag.txt）
 lingyun.exe --dump-frames        # 离屏渲染各状态帧（写 灵云-diag/*.png）；含 -glass 液态玻璃帧
 lingyun.exe --backdrop-probe 20  # 真机验证自适应输入：采到的是背景还是岛自己 + 单次耗时 + 决策预览
+lingyun.exe --settings-smoke 8 glass   # 起设置窗口停留 8 秒（可选材质 acrylic|glass|classic），供真机截图核对
 lingyun.exe --spectrum-probe 5   # 音频链路自检：频谱捕获峰值 + SMTC 会话状态 + 音量设备 + 天气定位来源
 lingyun.exe --marquee-probe      # 跑马灯运动验证（两次渲染比较标题带重心）
 lingyun.exe --toast-probe        # 通知权限 / 高水位 Id / 当前通知（AUMID、标题）

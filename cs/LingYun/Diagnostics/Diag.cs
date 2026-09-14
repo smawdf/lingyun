@@ -125,15 +125,38 @@ internal static class Diag
 
         // --settings-smoke：构造/显示/关闭一次设置窗口。
         // 自测断言覆盖不到 WPF 界面，但这个窗口是全部新选项的入口——至少保证它不抛。
+        // 可选参数：--settings-smoke [停留秒数] [acrylic|glass|classic]，用于真机截图核对三种界面材质。
         if (args.Contains("--settings-smoke"))
         {
             try
             {
+                int at = Array.IndexOf(args, "--settings-smoke");
+                int seconds = at + 1 < args.Length && int.TryParse(args[at + 1], out var sec)
+                    && sec is >= 0 and <= 60 ? sec : 0;
+                string material = at + 2 < args.Length
+                    && args[at + 2] is "acrylic" or "glass" or "classic" ? args[at + 2] : "";
+
                 var smokeCfg = new AppConfig { Theme = "system", Composite = true, Opacity = 60 };
+                if (material.Length > 0) smokeCfg.UiMaterial = material;
                 using var smokeMedia = new MediaSessionService();
                 using var smokeIsland = new NativeIslandApp(smokeCfg, smokeMedia);
                 var win = new Ui.SettingsWindow(smokeCfg, smokeIsland, () => { });
                 win.Show();
+                if (seconds > 0)
+                {
+                    // 泵一会儿消息让窗口真正画出来（外部截图靠这段停留）
+                    var until = DateTime.UtcNow.AddSeconds(seconds);
+                    while (DateTime.UtcNow < until)
+                    {
+                        var frame = new System.Windows.Threading.DispatcherFrame();
+                        System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
+                            System.Windows.Threading.DispatcherPriority.Background,
+                            new Action(() => frame.Continue = false));
+                        System.Windows.Threading.Dispatcher.PushFrame(frame);
+                        Thread.Sleep(40);
+                    }
+                    w.WriteLine($"设置窗口：停留 {seconds}s（材质 {smokeCfg.UiMaterial}）供截图核对");
+                }
                 win.Close();
                 // 液态玻璃 + 40% 也走一遍：确认新主题的单选回填与透明度预设不抛
                 var glassSmoke = new AppConfig { Theme = "liquid-glass", Opacity = 40 };
@@ -2020,6 +2043,22 @@ internal static class Diag
             Check("媒体页样式：Normalize 拒绝乱值、保留 a/b/c",
                 ConfigStore.Normalize(new AppConfig { MediaStyle = "nope" }).MediaStyle == "a"
                 && ConfigStore.Normalize(new AppConfig { MediaStyle = "c" }).MediaStyle == "c");
+
+            // 设置窗口材质：三档取值 + 按系统版本选实现（Win11 背景材质 / Win10 合成属性 / 纯色）
+            Check("界面材质：Normalize 接受三档、拒绝乱值、默认亚克力",
+                new AppConfig().UiMaterial == "acrylic"
+                && ConfigStore.Normalize(new AppConfig { UiMaterial = "glass" }).UiMaterial == "glass"
+                && ConfigStore.Normalize(new AppConfig { UiMaterial = "classic" }).UiMaterial == "classic"
+                && ConfigStore.Normalize(new AppConfig { UiMaterial = "neon" }).UiMaterial == "acrylic");
+            Check("界面材质：Win11 22H2+ 走 DWMWA_SYSTEMBACKDROP_TYPE",
+                Platform.WindowMaterial.ResolveBackdrop(22621, "acrylic") == "dwm-acrylic"
+                && Platform.WindowMaterial.ResolveBackdrop(26100, "glass") == "dwm-acrylic");
+            Check("界面材质：Win10 1803+ 退回 SetWindowCompositionAttribute",
+                Platform.WindowMaterial.ResolveBackdrop(19045, "acrylic") == "composition-acrylic"
+                && Platform.WindowMaterial.ResolveBackdrop(17763, "glass") == "composition-acrylic");
+            Check("界面材质：老系统与经典档都退回纯色（不假装有模糊）",
+                Platform.WindowMaterial.ResolveBackdrop(10240, "acrylic") == "solid"
+                && Platform.WindowMaterial.ResolveBackdrop(26100, "classic") == "solid");
             Check("媒体页标题：短标题单行、长标题两行且第二行带省略号",
                 NativeIslandApp.WrapTwoLines("夜曲", 300, 18, SKFontStyleWeight.SemiBold).Length == 1
                 && NativeIslandApp.WrapTwoLines(new string('长', 40), 100, 18, SKFontStyleWeight.SemiBold)
