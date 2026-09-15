@@ -94,6 +94,17 @@ internal static class WindowMaterial
     /// <summary>面板圆角（DIP）：玻璃大圆角（圆角由我们自己画），亚克力跟 DWM 的观感走。</summary>
     internal static double Radius(string material) => material == Glass ? 20 : 10;
 
+    /// <summary>
+    /// 色调 alpha 按「背景透明度」缩放。纯函数（自测用）。
+    /// 为什么要有它：亚克力的色调是交给 DWM 的 accent（GradientColor）画的，
+    /// 以前这里没缩放，于是滑杆对亚克力完全无效——只有玻璃那一档乘过，界面上的提示却是"都跟随"。
+    /// </summary>
+    internal static int ScaleTintAlpha(int argb, int opacityPercent)
+    {
+        int a = (int)Math.Round(((argb >> 24) & 0xFF) * Math.Clamp(opacityPercent, 40, 100) / 100.0);
+        return (a << 24) | (argb & 0x00FFFFFF);
+    }
+
     /// <summary>是否需要裁窗口区域：只有亚克力要（系统模糊会铺满整个矩形，不裁会露出方角）。</summary>
     internal static bool NeedsRegion(string material) => material != Glass;
 
@@ -146,7 +157,7 @@ internal static class WindowMaterial
     /// 参考实现：riverar/sample-win32-acrylicblur（WPF 亚克力事实标准样例），
     /// 它用的就是 AllowsTransparency=True + WindowStyle=None + 近透明背景 + accent 模糊。
     /// </summary>
-    public static void ApplyWindowChrome(Window window, bool dark, string material)
+    public static void ApplyWindowChrome(Window window, bool dark, string material, int opacityPercent = 100)
     {
         var hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == IntPtr.Zero) return;
@@ -157,7 +168,8 @@ internal static class WindowMaterial
             int darkFlag = dark ? 1 : 0;
             DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkFlag, sizeof(int));
 
-            int tint = TintArgb(material, dark);
+            // 色调浓度跟着「背景透明度」滑杆走（亚克力也一样——它的色调同样由这里给）
+            int tint = ScaleTintAlpha(TintArgb(material, dark), opacityPercent);
             int abgr = unchecked((int)((uint)tint & 0xFF000000
                 | (uint)((tint >> 16) & 0xFF)          // R → B
                 | (uint)(tint & 0x0000FF00)             // G

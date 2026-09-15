@@ -2331,6 +2331,12 @@ internal static class Diag
             Check("界面材质：玻璃/亚克力色调都带 alpha（真透）",
                 (Platform.WindowMaterial.TintArgb("glass", false) >> 24 & 0xFF) is > 0x80 and < 0xF0
                 && (Platform.WindowMaterial.TintArgb("acrylic", false) >> 24 & 0xFF) is > 0x60 and < 0xF0);
+            Check("界面材质：色调 alpha 跟随「背景透明度」（亚克力也要跟，以前只有玻璃跟）",
+                Platform.WindowMaterial.ScaleTintAlpha(unchecked((int)0x701A1B20), 100)
+                    == unchecked((int)0x701A1B20)
+                && (Platform.WindowMaterial.ScaleTintAlpha(unchecked((int)0x701A1B20), 40) >> 24 & 0xFF) == 45
+                && (Platform.WindowMaterial.ScaleTintAlpha(unchecked((int)0xD6FFFFFF), 70) >> 24 & 0xFF) == 150
+                && (Platform.WindowMaterial.ScaleTintAlpha(unchecked((int)0x701A1B20), 10) >> 24 & 0xFF) == 45);
             Check("界面材质：只有亚克力需要裁窗口区域（玻璃的四角由我们自己画）",
                 Platform.WindowMaterial.NeedsRegion("acrylic")
                 && !Platform.WindowMaterial.NeedsRegion("glass"));

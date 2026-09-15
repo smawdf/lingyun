@@ -750,7 +750,7 @@ public sealed class SettingsWindow : Window
 
         if (_ready || IsInitialized)
         {
-            WindowMaterial.ApplyWindowChrome(this, _dark, material);
+            WindowMaterial.ApplyWindowChrome(this, _dark, material, _cfg.Opacity);
             // 亚克力需要裁窗口区域（系统模糊铺满整矩形）；玻璃的圆角由我们自己画。
             // 注意：**不需要区域时也必须调用一次（半径 0）把旧区域清掉**——
             // 否则从亚克力切到玻璃后，系统里那个 10px 锯齿区域还留着，
