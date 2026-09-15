@@ -214,4 +214,10 @@ public static partial class Native
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    /// <summary>读窗口样式位（诊断用：确认窗口到底是不是分层窗）。</summary>
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    public const int GWL_EXSTYLE = -20;
 }

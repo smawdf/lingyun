@@ -21,10 +21,10 @@ namespace LingYun.Platform;
 ///   参考实现：riverar/sample-win32-acrylicblur（WPF 亚克力事实标准样例，微软 Rafael Rivera），
 ///   它用的就是 AllowsTransparency=True + WindowStyle=None + alpha=1 近透明背景 + accent 模糊。
 ///
-/// 三档材质只是参数不同（色调 + 圆角 + 是否交给 DWM 合成））：
-///   acrylic 亚克力：DWM 系统模糊，色调 ~65%，圆角 10，带落影
-///   glass   液态玻璃：半透明色调，圆角内侧由 LiquidGlassEdgeRenderer 做屏幕采样折射/轻微 RGB 色散，
-///                     中心保持透明，不做整窗模糊
+/// 三档材质只是参数不同（模糊半径 + 色调 alpha + 圆角 + 阴影），都由我们自己画：
+///   acrylic 亚克力：模糊 34px，色调 ~65%，圆角 10，带落影
+///   glass   液态玻璃：模糊 26px，色调 ~55%，圆角 20，带落影（WPF 做不了边缘折射，
+///                     界面上如实标注"这一档是近似"）
 ///   classic 原生 Windows：不抓屏不模糊，纯色 + 方角 + 无阴影，系统控件长相
 /// </summary>
 internal static class WindowMaterial
@@ -78,7 +78,7 @@ internal static class WindowMaterial
         return osBuild >= BuildAcrylicBlur ? "dwm-acrylic" : "solid";
     }
 
-    /// <summary>面板基准色调（带 alpha 才叫材质）：玻璃由设置窗口自己画，亚克力交给 DWM 合成。</summary>
+    /// <summary>面板基准色调（带 alpha 才叫材质）：抓屏模糊由 WPF 画，这里只给色调。</summary>
     internal static int TintArgb(string material, bool dark)
         => material switch
         {
