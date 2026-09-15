@@ -1954,6 +1954,18 @@ public sealed class NativeIslandApp : IDisposable
 
         DrawMaterialSurface(canvas, rect, radius, Pal.Body);
 
+        // 形变过程中（_morphT < 1）把内容按**当前**岛体裁剪：内容是按目标尺寸排版的，
+        // 不裁的话岛还没长到目标大小，内容就已经画出来了（看起来"内容比岛还大"）。
+        // 动画结束就还原成不裁剪，保持既有渲染完全不变（提示行之类的照旧可以画在外面）。
+        bool morphing = _morphT < 1;
+        if (morphing)
+        {
+            canvas.Save();
+            using var clipPath = new SKPath();
+            clipPath.AddRoundRect(rect, radius, radius);
+            canvas.ClipPath(clipPath, SKClipOperation.Intersect, true);
+        }
+
         if (_mode == "compact")
             DrawCompact(canvas, rect, s);
         else if (_mode == "expanded")
@@ -1962,6 +1974,8 @@ public sealed class NativeIslandApp : IDisposable
             DrawAlert(canvas, rect, s);
         else if (_mode == "confirm")
             DrawConfirm(canvas, rect, s);
+
+        if (morphing) canvas.Restore();
     }
 
 
@@ -4629,11 +4643,14 @@ public sealed class NativeIslandApp : IDisposable
     /// <summary>每帧开头更新一次缓存：钩子回调只读它，避免在回调里做任何计算。</summary>
     private void RefreshOutsideClickCache()
     {
+        // 注意：Island() 给的是**相对外壳**的坐标（CursorInIsland 里也是这么加 _shellX/_shellY 的），
+        // 而钩子回调拿到的鼠标点是**屏幕坐标** —— 这里必须换算，否则岛内的点击会被判成"岛外"，
+        // 表现就是"点 tab 先回缩"（曾经的真 bug）。
         var (ix, iy, iw, ih) = Island();
-        _rectL = ix;
-        _rectT = iy;
-        _rectR = ix + iw;
-        _rectB = iy + ih;
+        _rectL = _shellX + ix;
+        _rectT = _shellY + iy;
+        _rectR = _rectL + iw;
+        _rectB = _rectT + ih;
         _outsideWatchOn = _cfg.CollapseOnBlank && _mode == "expanded";
         if (_outsideClickPending)
         {

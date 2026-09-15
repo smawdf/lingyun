@@ -1928,6 +1928,20 @@ internal static class Diag
         w.WriteLine($"点击后形态 = {island.ModeForTest}");
         Check("点岛外桌面空白：面板收起了", island.ModeForTest == "compact", island.ModeForTest);
 
+        // 岛内的点击**不能**收起（这是用户报的 bug：点 tab 先回缩）。
+        // 根因是拿 Island()（相对外壳的坐标）直接跟钩子的屏幕坐标比 —— 岛内点击几乎全被判成"岛外"。
+        island.ForceMode("expanded");
+        Pump(0.6);
+        int ix2 = ix + iw / 2, iy2 = iy + 24;      // 页签条附近
+        Native.SetCursorPos(ix2, iy2);
+        Pump(0.2);
+        Native.SendInput((uint)inputs.Length, inputs,
+            System.Runtime.InteropServices.Marshal.SizeOf<Native.INPUT>());
+        Pump(0.8);
+        w.WriteLine($"点岛内 ({ix2},{iy2})（页签条附近）后形态 = {island.ModeForTest}");
+        Check("点岛内：不能收起（坐标换算错了就会在这里露馅）",
+            island.ModeForTest == "expanded", island.ModeForTest);
+
         // 收起来之后再点一次，不应该出乱子（形态保持在 compact）
         Native.SetCursorPos(ox, oy - 40);
         Pump(0.2);
