@@ -139,6 +139,11 @@ public sealed record WeatherInfo(string City, double TempC, string Desc, bool Ok
 public sealed class WeatherService
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(12) };
+    /// <summary>正常刷新间隔（30 分钟）。</summary>
+    private const int RefreshMs = 30 * 60 * 1000;
+    /// <summary>失败后的重试间隔（1 分钟）：一次网络抖动不该变成半小时的"天气不可用"。</summary>
+    private const int RetryMs = 60 * 1000;
+
     private readonly System.Timers.Timer _timer;
     private double? _lat, _lon;
     private string _city = "";
@@ -161,7 +166,9 @@ public sealed class WeatherService
         _manualCity = !string.IsNullOrWhiteSpace(city);
         _lat = lat;
         _lon = lon;
-        _timer = new System.Timers.Timer(30 * 60 * 1000) { AutoReset = true };
+        // 正常 30 分钟刷一次；**但失败后只等 1 分钟就重试**（见 FetchAsync）——
+        // 以前失败也要等满 30 分钟，启动时撞上一次网络抖动就等于半小时看不到天气。
+        _timer = new System.Timers.Timer(RefreshMs) { AutoReset = true };
         _timer.Elapsed += async (_, _) => await RefreshAsync();
     }
 
@@ -218,12 +225,14 @@ public sealed class WeatherService
             double? hum = cur.TryGetProperty("relative_humidity_2m", out var hv) ? hv.GetDouble() : null;
             double? wind = cur.TryGetProperty("wind_speed_10m", out var wv) ? wv.GetDouble() : null;
             double? cloud = cur.TryGetProperty("cloud_cover", out var cv) ? cv.GetDouble() : null;
+            _timer.Interval = RefreshMs;      // 成功：回到常规节奏
             Updated?.Invoke(new WeatherInfo(_city, temp, WmoDesc(code), true,
                 Hourly: ParseHourly(doc.RootElement), Humidity: hum, WindKph: wind, Cloud: cloud,
                 Code: code));
         }
         catch (Exception ex)
         {
+            _timer.Interval = RetryMs;        // 失败：1 分钟后再试，别让用户干等半小时
             Updated?.Invoke(new WeatherInfo(_city, 0, "", false, ex.Message));
         }
     }

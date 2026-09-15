@@ -25,7 +25,7 @@ internal static class Diag
         "--font-audit", "--dump-text", "--dump-frames", "--self-test", "--diag-all", "--diag-no-frames",
         "--diag-monitor", "--toast-probe", "--toast-test", "--diag-quick", "--spectrum-probe", "--marquee-probe",
         "--wake-probe", "--settings-smoke", "--backdrop-probe", "--acrylic-probe", "--volume-probe",
-        "--audio-probe", "--outside-click-probe", "--frame-probe", "--toast-shrink-probe",
+        "--audio-probe", "--outside-click-probe", "--frame-probe", "--toast-shrink-probe", "--weather-probe",
     };
 
     public static bool ShouldRun(string[] args) => args.Any(a => Known.Contains(a));
@@ -235,6 +235,12 @@ internal static class Diag
         {
             try { failures += ToastShrinkProbe(w); }
             catch (Exception ex) { w.WriteLine("!! --toast-shrink-probe 异常: " + ex); failures++; }
+        }
+
+        if (args.Contains("--weather-probe"))
+        {
+            try { failures += WeatherProbe(w); }
+            catch (Exception ex) { w.WriteLine("!! --weather-probe 异常: " + ex); failures++; }
         }
 
         if (args.Contains("--marquee-probe"))
@@ -1925,6 +1931,56 @@ internal static class Diag
             Check("音频设备：无效设备立刻失败（不再走沉睡式校验）", msFail <= 200, $"{msFail:0.0}ms");
         }
 
+        w.WriteLine();
+        return failed;
+    }
+
+    // ==================================================================
+    // --weather-probe ：真机验证天气链路（把真实报错文字打出来，不靠猜）
+    // ==================================================================
+    private static int WeatherProbe(TextWriter w)
+    {
+        w.WriteLine("========== --weather-probe ==========");
+        w.WriteLine("# 走的是 App 完全相同的链路：配置（手填城市/坐标）→ 系统定位 → IP 兜底 → Open-Meteo。");
+        w.WriteLine("# 把定位源、城市、以及 WeatherInfo 里的 Ok/错误原文都打出来。");
+        w.WriteLine();
+
+        var cfg = ConfigStore.Load();
+        string latS = cfg.Lat?.ToString() ?? "(未设)";
+        string lonS = cfg.Lon?.ToString() ?? "(未设)";
+        w.WriteLine($"配置：location={cfg.Location}  lat={latS}  lon={lonS}");
+        var ws = new Services.WeatherService(cfg.Location, cfg.Lat, cfg.Lon);
+        Services.WeatherInfo? got = null;
+        ws.Updated += info => got = info;
+        ws.Start();
+        for (int i = 0; i < 75 && got is null; i++) Pump(0.4);   // 最多等 ~30s
+
+        w.WriteLine($"定位源 = {ws.LocationSource}　最后城市 = {ws.LastCity}");
+        int failed = 0;
+        if (got is not { } info)
+        {
+            w.WriteLine("!! 等不到任何天气更新（服务连回调都没触发）");
+            w.WriteLine();
+            return 1;
+        }
+        string errS = info.Error ?? "(无)";
+        string codeS = info.Code?.ToString() ?? "(无)";
+        w.WriteLine($"Ok={info.Ok}  错误={errS}");
+        w.WriteLine($"城市={info.City}  温度={info.TempC:0.#}  描述={info.Desc}  码={codeS}");
+        string humS = info.Humidity?.ToString() ?? "(无)";
+        string windS = info.WindKph?.ToString() ?? "(无)";
+        string cloudS = info.Cloud?.ToString() ?? "(无)";
+        w.WriteLine($"湿度={humS}  风速={windS}  云量={cloudS}  逐小时={info.Hourly?.Length ?? 0} 条");
+        if (!info.Ok)
+        {
+            w.WriteLine("!! 天气不可用 —— 这就是用户看到的现象，错误原文在上面");
+            failed++;
+        }
+        else
+        {
+            w.WriteLine("PASS  天气可取（城市/温度/描述/湿度/风速/云量/天气码都在）");
+        }
+        try { ws.Stop(); } catch { /* 退出路径 */ }
         w.WriteLine();
         return failed;
     }
