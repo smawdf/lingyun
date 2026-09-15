@@ -3385,8 +3385,9 @@ public sealed class NativeIslandApp : IDisposable
         }
 
         var glyph = ch.VolGlyph;
-        DrawText(canvas, muted ? "🔇" : "🔊", glyph.Left, glyph.MidY + 5 * s, 13 * s,
-            _volPopup ? Pal.Fg : Pal.Sub);
+        // 音量图标与播放/暂停/切歌用同一个前景色（Pal.Fg，深色主题下就是纯白）：
+        // 以前收起弹出条时用 Pal.Sub（灰的），跟旁边的传输键不一致，看着像两个层级的控件。
+        DrawText(canvas, muted ? "🔇" : "🔊", glyph.Left, glyph.MidY + 5 * s, 13 * s, Pal.Fg);
         if (!_volPopup) return;   // 弹出条只在点开时画
 
         var popup = ch.VolTrack;
