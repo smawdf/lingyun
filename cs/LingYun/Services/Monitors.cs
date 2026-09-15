@@ -203,21 +203,21 @@ public sealed class WeatherService
                 Updated?.Invoke(new WeatherInfo(_city.Length == 0 ? "北京" : _city, 0, "", false, "无法定位"));
                 return;
             }
+            // 注意：**不要**再带 `current_weather=true` —— 实测（2026-09-15）只要它和 `current=` 同时出现，
+            // Open-Meteo 就返回 `current: null`，于是湿度/风速/云量三张卡永远显示"—"。
+            // 只留 `current=` 时温度、天气码、湿度、风速、云量都能拿到（已实测）。
             var url = $"https://api.open-meteo.com/v1/forecast?latitude={_lat}&longitude={_lon}"
-                + "&current_weather=true&hourly=temperature_2m,weathercode&forecast_days=2"
+                + "&hourly=temperature_2m,weathercode&forecast_days=2"
                 + "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,cloud_cover";
             var json = await Http.GetStringAsync(url);
             using var doc = JsonDocument.Parse(json);
-            var cw = doc.RootElement.GetProperty("current_weather");
-            double temp = cw.GetProperty("temperature").GetDouble();
-            double code = cw.GetProperty("weathercode").GetDouble();
-            double? hum = null, wind = null, cloud = null;
-            if (doc.RootElement.TryGetProperty("current", out var cur))
-            {
-                hum = cur.TryGetProperty("relative_humidity_2m", out var hv) ? hv.GetDouble() : null;
-                wind = cur.TryGetProperty("wind_speed_10m", out var wv) ? wv.GetDouble() : null;
-                cloud = cur.TryGetProperty("cloud_cover", out var cv) ? cv.GetDouble() : null;
-            }
+            // 全部从 `current` 块读（旧 `current_weather` 块已不再请求）
+            var cur = doc.RootElement.GetProperty("current");
+            double temp = cur.GetProperty("temperature_2m").GetDouble();
+            double code = cur.GetProperty("weather_code").GetDouble();
+            double? hum = cur.TryGetProperty("relative_humidity_2m", out var hv) ? hv.GetDouble() : null;
+            double? wind = cur.TryGetProperty("wind_speed_10m", out var wv) ? wv.GetDouble() : null;
+            double? cloud = cur.TryGetProperty("cloud_cover", out var cv) ? cv.GetDouble() : null;
             Updated?.Invoke(new WeatherInfo(_city, temp, WmoDesc(code), true,
                 Hourly: ParseHourly(doc.RootElement), Humidity: hum, WindKph: wind, Cloud: cloud));
         }
