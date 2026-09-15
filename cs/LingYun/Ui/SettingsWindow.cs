@@ -2,7 +2,9 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using LingYun.Config;
 using LingYun.Platform;
 
@@ -16,8 +18,7 @@ namespace LingYun.Ui;
 ///
 /// 界面材质三档（设置窗口自身，岛的材质在「主题」里选）：
 ///   acrylic 亚克力：DWM 系统模糊（Win11 背景材质 / Win10 合成属性），半透明面板
-///   glass   液态玻璃：亚克力 + 玻璃色调 + 大圆角。WPF 没有 backdrop-filter，
-///                     网页里那种边缘折射搬不过来——这档是近似，不是真折射
+///   glass   液态玻璃：半透明色调 + 圆角边缘屏幕采样折射/轻微色散（只画边缘环带，非全窗模糊）
 ///   classic 原生 Windows：纯色 + 方角 + 系统控件长相
 /// </summary>
 public sealed class SettingsWindow : Window
@@ -97,7 +98,12 @@ public sealed class SettingsWindow : Window
     private const double ShadowMargin = 16;      // 面板外留给落影的一圈
     private readonly Border _shadowHost = new();
     private readonly Border _tintOverlay = new();
+    private readonly Image _refractOverlay = new();
     private readonly Border _edgeOverlay = new();
+    private readonly LiquidGlassEdgeRenderer _edgeRenderer = new();
+    private readonly DispatcherTimer _edgeTimer;
+    private bool _edgeDirty = true;
+    private const double EdgeRefreshMs = 100;
     private const double NavW = 196;
 
     public SettingsWindow(AppConfig cfg, NativeIslandApp island, Action save)
@@ -105,6 +111,23 @@ public sealed class SettingsWindow : Window
         _cfg = cfg;
         _island = island;
         _save = save;
+        _edgeTimer = new DispatcherTimer(DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromMilliseconds(EdgeRefreshMs),
+        };
+        _edgeTimer.Tick += (_, _) =>
+        {
+            if (IsVisible && MaterialFor(_cfg.Theme) == WindowMaterial.Glass)
+            {
+                _edgeDirty = true;
+                RefreshEdgeRefraction();
+            }
+        };
+        _refractOverlay.IsHitTestVisible = false;
+        _refractOverlay.Stretch = Stretch.Fill;
+        _refractOverlay.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _refractOverlay.VerticalAlignment = VerticalAlignment.Stretch;
+        _refractOverlay.Visibility = Visibility.Collapsed;
 
         Title = "灵云设置";
         Width = WinW;
@@ -143,6 +166,7 @@ public sealed class SettingsWindow : Window
         // 它是合成器的一部分，窗口移动时模糊跟手；"抓屏 + 自己糊"在拖动时必然滞后。
         var panel = new Grid();
         panel.Children.Add(_tintOverlay);
+        panel.Children.Add(_refractOverlay);
         panel.Children.Add(BuildLayout());
         // 包围线放最上层：Border 自己的描边画在子元素**下面**，会被内容和色调层盖住，
         // 所以单独用一个只描边的 Border 盖上来（不吃鼠标事件，拖动照旧）
@@ -165,6 +189,9 @@ public sealed class SettingsWindow : Window
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
         Closed += (_, _) =>
         {
+            _edgeTimer.Stop();
+            _edgeRenderer.Dispose();
+            _refractOverlay.Source = null;
             try { _save(); } catch { /* 写盘失败不致命 */ }
         };
         // 有 HWND 之后：把自己从抓屏里排除（否则抓"背后的屏幕"抓到的是自己），并关掉 DWM 圆角
@@ -177,19 +204,78 @@ public sealed class SettingsWindow : Window
         };
         SizeChanged += (_, _) =>
         {
-            // 只重算圆角/裁剪——**不要重新落位**：那会在拖边缘时把窗口边拉边挪，看着像弹跳
+            // 只重算圆角/裁剪——**不要重新落位**：那会在拖边缘时把窗口边拉边挪，看着就是弹跳
             UpdatePanelClip();
             string m = MaterialFor(_cfg.Theme);
             WindowMaterial.ApplyRoundedRegion(this,
                 WindowMaterial.NeedsRegion(m) ? WindowMaterial.Radius(m) : 0);
+            MarkEdgeRefractionDirty();
         };
         Loaded += (_, _) =>
         {
             PlaceBelowIsland();
             UpdatePanelClip();
+            UpdateEdgeRefractionTimer();
+            MarkEdgeRefractionDirty();
         };
+        LocationChanged += (_, _) => OnLocationChanged();
     }
 
+    private void MarkEdgeRefractionDirty()
+    {
+        _edgeDirty = true;
+    }
+
+    private void UpdateEdgeRefractionTimer()
+    {
+        bool glass = IsVisible && MaterialFor(_cfg.Theme) == WindowMaterial.Glass && IsInitialized;
+        _refractOverlay.Visibility = glass ? Visibility.Visible : Visibility.Collapsed;
+        if (glass)
+        {
+            _edgeDirty = true;
+            if (!_edgeTimer.IsEnabled) _edgeTimer.Start();
+            RefreshEdgeRefraction();
+        }
+        else
+        {
+            _edgeTimer.Stop();
+            _refractOverlay.Source = null;
+        }
+    }
+
+    private void RefreshEdgeRefraction()
+    {
+        if (!_edgeDirty || !IsVisible || MaterialFor(_cfg.Theme) != WindowMaterial.Glass || !IsInitialized)
+            return;
+        _edgeDirty = false;
+        try
+        {
+            var source = _edgeRenderer.Capture(new WindowInteropHelper(this).Handle,
+                WindowMaterial.Radius(WindowMaterial.Glass), _cfg.Opacity, PanelLuminance());
+            if (source is not null)
+                _refractOverlay.Source = source;
+        }
+        catch
+        {
+            // 屏幕捕获失败时保留透明色调，不让材质影响设置窗口操作。
+        }
+    }
+
+    /// <summary>
+    /// 玻璃面板本体的亮度，决定棱边往哪边做明暗：浅面板压暗、深面板提亮。
+    /// 只取色调色即可——棱边要对比的是"面板看起来的样子"，不是桌面。
+    /// </summary>
+    private int PanelLuminance()
+    {
+        int argb = WindowMaterial.TintArgb(WindowMaterial.Glass, _dark);
+        int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
+        return (int)Math.Round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    }
+
+    private void OnLocationChanged()
+    {
+        MarkEdgeRefractionDirty();
+    }
     private const int WM_NCHITTEST = 0x0084;
     private const int ResizeBorderDip = 6;
 
@@ -471,6 +557,7 @@ public sealed class SettingsWindow : Window
             _opacityLabel.Text = $"  {v:0}%";
             _island.ApplyConfig();
             ApplyMaterial();   // 设置窗口的玻璃色调也跟着透明度走
+            MarkEdgeRefractionDirty();
         });
         AddOpacityPresets(card);
         AddHint(root, "只压背景与材质，文字和强调色不变；三档材质与液态玻璃都跟随。");
@@ -752,8 +839,10 @@ public sealed class SettingsWindow : Window
             string effective = WindowMaterial.ResolveBackdrop(Environment.OSVersion.Version.Build, material);
             _materialHint.Text = material switch
             {
-                "glass" => "与岛同一套材质：清晰透明（不做模糊），背后内容直接透出来，"
-                           + "跟随「背景透明度」。WPF 做不了边缘折射，这是它和岛上材质的唯一差别。",
+                "glass" => "与岛同一套材质：清晰透明，圆角边缘把窗外桌面采样后压进窄环带"
+                           + "（带轻微 RGB 色散与一圈棱边明暗），中心保持透明；"
+                           + "只刷新边缘环带，不做全窗实时模糊，跟随「背景透明度」"
+                           + "（抓屏失败时回退为透明色调）。",
                 _ => "岛与设置窗口都用亚克力：窗口是系统合成器模糊（DWM），"
                      + "桌面被糊在面板后面、移动跟手。"
                      + (effective == "solid" ? "（当前系统不支持系统模糊，退化为纯色）" : ""),
@@ -769,6 +858,8 @@ public sealed class SettingsWindow : Window
         }
         ApplyControlStyles();
         RefreshStates();
+        UpdateEdgeRefractionTimer();
+        MarkEdgeRefractionDirty();
     }
 
     private static Color C(string hex) => (Color)ColorConverter.ConvertFromString(hex);
@@ -1024,6 +1115,8 @@ public sealed class SettingsWindow : Window
         _cfg.Theme = glass ? "liquid-glass" : _cfg.BaseTheme;
         _island.ApplyConfig();
         ApplyMaterial();
+        UpdateEdgeRefractionTimer();
+        MarkEdgeRefractionDirty();
     }
 
     private void SetBaseTheme(string theme)
@@ -1033,6 +1126,8 @@ public sealed class SettingsWindow : Window
         if (!IslandPalette.IsLiquidGlass(_cfg.Theme)) _cfg.Theme = theme;   // 玻璃档下只记住，不切材质
         _island.ApplyConfig();
         ApplyMaterial();
+        UpdateEdgeRefractionTimer();
+        MarkEdgeRefractionDirty();
     }
 
     /// <summary>置顶层级：改完立刻重算（auto 模式下前台全屏时让位）。</summary>
