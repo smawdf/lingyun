@@ -1111,6 +1111,43 @@ internal static class Diag
                 appGlass.ForceFocus("timer");
                 appGlass.ForcePage(0);
             }),
+            // 天气动效对照帧：同一天气页、四种天气码，看动效画出来对不对（离屏只有一帧，看形状）
+            ("page-weather-rain", () =>
+            {
+                appPages.InjectData(
+                    new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600),
+                    new WeatherInfo("深圳", 24.0, "小雨", true, Code: 61,
+                        Humidity: 92, WindKph: 12, Cloud: 88));
+                appPages.ForceMode("expanded");
+                appPages.ForcePage(2);
+            }),
+            ("page-weather-snow", () =>
+            {
+                appPages.InjectData(
+                    new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600),
+                    new WeatherInfo("哈尔滨", -8.0, "中雪", true, Code: 73,
+                        Humidity: 78, WindKph: 9, Cloud: 95));
+                appPages.ForceMode("expanded");
+                appPages.ForcePage(2);
+            }),
+            ("page-weather-sun", () =>
+            {
+                appPages.InjectData(
+                    new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600),
+                    new WeatherInfo("深圳", 31.0, "晴", true, Code: 0,
+                        Humidity: 45, WindKph: 6, Cloud: 5));
+                appPages.ForceMode("expanded");
+                appPages.ForcePage(2);
+            }),
+            ("page-weather-fog", () =>
+            {
+                appPages.InjectData(
+                    new PerfMetrics(37.5, 62.0, 9.9, 15.9, 843.0, 0, 312.0, 273600),
+                    new WeatherInfo("重庆", 16.0, "雾", true, Code: 45,
+                        Humidity: 97, WindKph: 3, Cloud: 100));
+                appPages.ForceMode("expanded");
+                appPages.ForcePage(2);
+            }),
             // 「快捷」页底部音频区（音量并进这里了）：注入 42% 出图，真机没声卡也能看布局
             ("page-quick-audio", () =>
             {
@@ -1196,6 +1233,8 @@ internal static class Diag
             ["page-plan"] = appPages, ["page-perf"] = appPages, ["page-weather"] = appPages,
             ["page-tasks"] = appPages, ["page-month"] = appPages,
             ["page-quick"] = appPages, ["page-quick-hold-forced"] = appPages,
+            ["page-weather-rain"] = appPages, ["page-weather-snow"] = appPages,
+            ["page-weather-sun"] = appPages, ["page-weather-fog"] = appPages,
             ["page-quick-audio"] = appPages, ["page-quick-audio-muted"] = appPages,
             ["page-quick-devices"] = appPages,
             ["compact-clock-glass"] = appGlass, ["compact-clock-glass-40"] = appGlass40,
@@ -2932,6 +2971,16 @@ internal static class Diag
             Check("界面材质：只有亚克力需要裁窗口区域（玻璃的四角由我们自己画）",
                 Platform.WindowMaterial.NeedsRegion("acrylic")
                 && !Platform.WindowMaterial.NeedsRegion("glass"));
+            Check("天气动效：天气码映射（晴/多云/雾/雨/雪/雷/未知）",
+                NativeIslandApp.WeatherFxFor(0) == "sun"
+                && NativeIslandApp.WeatherFxFor(1) == "sun"
+                && NativeIslandApp.WeatherFxFor(3) == "cloud"
+                && NativeIslandApp.WeatherFxFor(45) == "fog"
+                && NativeIslandApp.WeatherFxFor(61) == "rain"
+                && NativeIslandApp.WeatherFxFor(73) == "snow"
+                && NativeIslandApp.WeatherFxFor(96) == "thunder"
+                && NativeIslandApp.WeatherFxFor(-1) == ""
+                && NativeIslandApp.WeatherFxFor(200) == "");
             Check("媒体页样式：Normalize 只认 a/b/c（卡片 D 已按用户要求移除）",
                 ConfigStore.Normalize(new AppConfig { MediaStyle = "d" }).MediaStyle == "a");
             {

@@ -134,7 +134,7 @@ public sealed class PerfSampler : IDisposable
 /// <summary>当前天气 + 未来数小时预报（Hourly 为空 = 数据源没给，UI 侧降级显示）。</summary>
 public sealed record WeatherInfo(string City, double TempC, string Desc, bool Ok,
     string? Error = null, (int Hour, double Temp, double Code)[]? Hourly = null,
-    double? Humidity = null, double? WindKph = null, double? Cloud = null);
+    double? Humidity = null, double? WindKph = null, double? Cloud = null, double? Code = null);
 
 public sealed class WeatherService
 {
@@ -219,7 +219,8 @@ public sealed class WeatherService
             double? wind = cur.TryGetProperty("wind_speed_10m", out var wv) ? wv.GetDouble() : null;
             double? cloud = cur.TryGetProperty("cloud_cover", out var cv) ? cv.GetDouble() : null;
             Updated?.Invoke(new WeatherInfo(_city, temp, WmoDesc(code), true,
-                Hourly: ParseHourly(doc.RootElement), Humidity: hum, WindKph: wind, Cloud: cloud));
+                Hourly: ParseHourly(doc.RootElement), Humidity: hum, WindKph: wind, Cloud: cloud,
+                Code: code));
         }
         catch (Exception ex)
         {
