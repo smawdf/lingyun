@@ -65,13 +65,19 @@ public sealed class NativeIslandApp : IDisposable
     private const int AutoHideHotZonePx = 4;     // 自动隐藏：光标进入工作区顶部多少像素内恢复
 
     /// <summary>展开面板的页签名。页签与页面绘制、命中测试共用这一份顺序。</summary>
-    internal static readonly string[] PageNames = { "计划", "性能", "天气", "日程", "日历", "快捷" };
+    internal static readonly string[] PageNames = { "计划", "性能", "天气", "日程", "日历", "快捷", "音量" };
 
     /// <summary>「快捷」页的下标——功能按钮只出现在这里，紧凑态一个按钮都不放。</summary>
     internal const int QuickPageIndex = 5;
 
     /// <summary>「日程」页的下标——可直接在岛上增删改。</summary>
     internal const int TasksPageIndex = 3;
+
+    /// <summary>
+    /// 「音量」页下标。**追加在最后**：页签顺序与既有下标（日程=3、快捷=5）都被自测钉着，
+    /// 插在中间会连带改掉它们。
+    /// </summary>
+    internal const int VolumePageIndex = 6;
 
     /// <summary>ISO 星期（1=周一 … 7=周日）对应的中文单字。</summary>
     private static readonly string[] WdNames = { "一", "二", "三", "四", "五", "六", "日" };
@@ -122,6 +128,7 @@ public sealed class NativeIslandApp : IDisposable
             2 => new SKColor(0x38, 0xbd, 0xf8),
             3 => new SKColor(0xa7, 0x8b, 0xfa),
             4 => new SKColor(0xfb, 0xbf, 0x24),
+            6 => new SKColor(0x2d, 0xd4, 0xbf),   // 音量页：青色（默认那支红是给「快捷」的危险语义留的）
             _ => new SKColor(0xff, 0x6b, 0x6b),
         }
         : page switch
@@ -131,6 +138,7 @@ public sealed class NativeIslandApp : IDisposable
             2 => new SKColor(0x02, 0x84, 0xc7),
             3 => new SKColor(0x7c, 0x3a, 0xed),
             4 => new SKColor(0xb4, 0x53, 0x09),
+            6 => new SKColor(0x0d, 0x94, 0x88),   // 音量页：青色
             _ => new SKColor(0xdc, 0x26, 0x26),
         };
 
@@ -341,28 +349,6 @@ public sealed class NativeIslandApp : IDisposable
     /// 把一次配置改动排进岛线程执行（编辑器窗口在 WPF 线程，直接改 Tasks 会和每帧绘制竞争）。
     /// </summary>
     public void Post(Action mutation) => _pending.Enqueue(mutation);
-
-    /// <summary>音量快照（跨线程传值用；Available=false 表示设备不可用）。</summary>
-    internal readonly record struct VolumeSnapshot(bool Available, float Volume, bool Muted);
-
-    /// <summary>
-    /// 设置窗口读音量：**必须回到岛线程上取**。AudioEndpointVolume 不是敏捷 COM 对象
-    /// （服务自己的注释就是这么写的），从 WPF 线程直接碰会抛 RPC_E_WRONG_THREAD；
-    /// 而服务内部是 try/catch 的，异常会被吞成"设备不可用"——界面上表现为整块灰掉、像没声卡，
-    /// 属于静默错，比崩溃难查得多。回调跑在岛线程上，调用方要自己切回 UI 线程再动控件。
-    /// </summary>
-    internal void ReadVolumeForSettings(Action<VolumeSnapshot> report) => Post(() =>
-    {
-        var svc = _volumeSvc;
-        if (svc is null) { report(new VolumeSnapshot(false, 0f, false)); return; }
-        report(new VolumeSnapshot(svc.Available, svc.GetVolume() ?? 0f, svc.IsMuted() ?? false));
-    });
-
-    /// <summary>设置窗口改主音量（在岛线程上执行）。</summary>
-    internal void SetVolumeForSettings(float level) => Post(() => _volumeSvc?.SetVolume(level));
-
-    /// <summary>设置窗口切静音（在岛线程上执行）。</summary>
-    internal void ToggleMuteForSettings() => Post(() => _volumeSvc?.ToggleMute());
 
     /// <summary>
     /// 应用一次事项改动并写盘（排进岛线程执行）。original=null 且 replacement 非空 → 追加；
@@ -730,7 +716,11 @@ public sealed class NativeIslandApp : IDisposable
     private bool _topmostYield;        // 设置窗打开期间让位
     private bool _topmostNow = true;   // 当前实际置顶状态
     private bool _volPopup;      // 音量竖向弹出条是否展开
-    private bool _volDrag;       // 正在拖动音量
+    private bool _volDrag;       // 正在拖动音量（媒体页的竖向弹出条）
+    private bool _volPageDrag;   // 正在拖动「音量」页的横向条
+    /// <summary>音量页显示用的快照：COM 读不便宜，而面板每帧都在重绘，所以按秒缓存。</summary>
+    private (bool Available, float Level, bool Muted) _volShown;
+    private long _volReadAt;
     private bool _seekDrag;
     private long? _seekPreviewMs;
     private DateTime? _seekPreviewAt;
@@ -812,6 +802,14 @@ public sealed class NativeIslandApp : IDisposable
     {
         _hover = true;
         _leftAt = null;
+        if (_volPageDrag)
+        {
+            var (ixv, iyv, iwv, ihv) = Island();
+            ApplyVolumeLevel((float)VolumeFromX(
+                VolumePageTrack(PageBody(new SKRect(ixv, iyv, ixv + iwv, iyv + ihv), _lastScale),
+                    _lastScale), x));
+            return;
+        }
         if (_volDrag)
         {
             if (_volumeSvc is { Available: true } v2)
@@ -876,6 +874,11 @@ public sealed class NativeIslandApp : IDisposable
         if (_volDrag)
         {
             _volDrag = false;
+            return;
+        }
+        if (_volPageDrag)
+        {
+            _volPageDrag = false;
             return;
         }
         if (_seekDrag)
@@ -1079,6 +1082,28 @@ public sealed class NativeIslandApp : IDisposable
                 {
                     if (_cfg.Tasks.Count < 12) TaskEditRequested?.Invoke(-1);
                     return;
+                }
+                SetMode("compact");
+                return;
+            }
+            // 「音量」页：点横条设音量（按住拖也行）、点静音钮切静音。点空白收起。
+            if (PageHandlerOwnsClick(mediaView, _page, VolumePageIndex))
+            {
+                var body = PageBody(new SKRect(ix, iy, ix + iw, iy + ih), _lastScale);
+                if (VolumePageValue().Available)
+                {
+                    if (VolumePageMute(body, _lastScale).Contains((float)x, (float)y))
+                    {
+                        ApplyVolumeMuteToggle();
+                        return;
+                    }
+                    var track = VolumePageTrack(body, _lastScale);
+                    if (track.Contains((float)x, (float)y))
+                    {
+                        ApplyVolumeLevel((float)VolumeFromX(track, x));
+                        _volPageDrag = true;
+                        return;
+                    }
                 }
                 SetMode("compact");
                 return;
@@ -1932,6 +1957,52 @@ public sealed class NativeIslandApp : IDisposable
     internal void InjectVolume(float? level, bool muted = false)
         => _volumeOverride = level is null ? null : (level.Value, muted);
 
+    /// <summary>
+    /// 音量页显示用的值：优先诊断注入，其次真实设备；真实读取按秒缓存——COM 读不便宜，
+    /// 而面板每帧都在重绘。这一切都在**岛线程**上发生，所以不存在跨线程用 COM 的问题。
+    /// </summary>
+    private (bool Available, float Level, bool Muted) VolumePageValue(bool force = false)
+    {
+        if (_volumeOverride is { } ov)
+            return (true, Math.Clamp(ov.level, 0f, 1f), ov.muted);
+        long now = Environment.TickCount64;
+        if (!force && now - _volReadAt < 1000) return _volShown;
+        _volReadAt = now;
+        _volShown = _volumeSvc is { Available: true } svc
+            ? (true, svc.GetVolume() ?? 0f, svc.IsMuted() == true)
+            : (false, 0f, false);
+        return _volShown;
+    }
+
+    /// <summary>音量页：把音量设成 level（点击与拖动都走这里，岛线程上直接碰 COM）。</summary>
+    private void ApplyVolumeLevel(float level)
+    {
+        _volumeSvc?.SetVolume(level);       // 服务内部会把 0 以上的音量自动解除静音
+        VolumePageValue(force: true);       // 立刻刷新，界面不显示旧值
+    }
+
+    /// <summary>音量页：切静音（点静音钮走这里）。</summary>
+    private void ApplyVolumeMuteToggle()
+    {
+        _volumeSvc?.ToggleMute();
+        VolumePageValue(force: true);
+    }
+
+    /// <summary>
+    /// 诊断用：音量页当前显示的快照。**只读缓存、不碰 COM**，所以诊断进程从别的线程读也安全；
+    /// 要强制重读设备请用 VolumePageRefreshForTest（它会排到岛线程上执行）。
+    /// </summary>
+    internal (bool Available, float Level, bool Muted) VolumePageStateForTest => _volShown;
+
+    /// <summary>诊断用：让岛线程立刻重读一次设备。</summary>
+    internal void VolumePageRefreshForTest() => Post(() => VolumePageValue(force: true));
+
+    /// <summary>诊断用：走和点击完全同一条路径改音量（在岛线程上执行）。</summary>
+    internal void VolumePageSetForTest(float level) => Post(() => ApplyVolumeLevel(level));
+
+    /// <summary>诊断用：走和点击完全同一条路径切静音。</summary>
+    internal void VolumePageToggleMuteForTest() => Post(() => ApplyVolumeMuteToggle());
+
     /// <summary>离屏渲染用：注入歌词（null 恢复读真实服务）。当前位置仍取自注入的媒体状态。</summary>
     internal void InjectLyrics(LyricLine[]? lines) => _lyricsOverride = lines;
 
@@ -2510,6 +2581,19 @@ public sealed class NativeIslandApp : IDisposable
     internal static double VolumeFromY(SKRect groove, double y)
         => Math.Clamp((groove.Bottom - y) / Math.Max(1, groove.Height), 0, 1);
 
+    /// <summary>「音量」页的横向主音量条（绘制与命中测试共用，否则点不准）。</summary>
+    internal static SKRect VolumePageTrack(SKRect body, float s)
+        => new(body.Left + 24 * s, body.Top + 132 * s, body.Right - 24 * s, body.Top + 152 * s);
+
+    /// <summary>「音量」页的静音按钮（在横条下方，不与横条重叠）。</summary>
+    internal static SKRect VolumePageMute(SKRect body, float s)
+        => new(body.Left + 24 * s, body.Top + 168 * s,
+               body.Left + 24 * s + 104 * s, body.Top + 168 * s + 34 * s);
+
+    /// <summary>按横向位置换算音量（0..1，左端 = 0）。纯函数，自测钉住。</summary>
+    internal static double VolumeFromX(SKRect track, double x)
+        => Math.Clamp((x - track.Left) / Math.Max(1, track.Width), 0, 1);
+
     /// <summary>来源切换 chip（左锚点）。会话 &lt;2 时返回 Empty（不画也不命中）。</summary>
     private SKRect ChipAt(float x, float y, float h, float s)
     {
@@ -2569,6 +2653,7 @@ public sealed class NativeIslandApp : IDisposable
                 case 3: DrawPageTasks(canvas, body, s); break;
                 case 4: DrawPageMonth(canvas, body, s); break;
                 case 5: DrawPageQuick(canvas, body, s); break;
+                case 6: DrawPageVolume(canvas, body, s); break;
             }
             DrawText(canvas, "滚轮 / 点击页签切换", r.Left + PagePadX * s, r.Top + 303 * s,
                 11.5f * s, Pal.Dim);
@@ -3322,6 +3407,51 @@ public sealed class NativeIslandApp : IDisposable
     /// 「快捷」页：2×3 起步的玻璃方卡（彩色圆钮 + 标签）。危险动作整卡红框 + 长按进度弧；
     /// 「＋」槽位打开自定义程序编辑；自定义卡右键移除由命中层处理。
     /// </summary>
+    /// <summary>
+    /// 「音量」页：主音量横向条（点/拖都行）+ 静音钮。
+    /// 放在岛上而不是设置窗口里：一是随手就能调，二是**这句代码本来就跑在岛线程上**，
+    /// 直接碰 AudioEndpointVolume（非敏捷 COM）不会踩跨线程的坑。
+    /// </summary>
+    private void DrawPageVolume(SKCanvas canvas, SKRect b, float s)
+    {
+        var (available, level, muted) = VolumePageValue();
+        var ac = PageAccent(VolumePageIndex);
+        if (!available)
+        {
+            DrawText(canvas, "没有找到可用的播放设备", b.Left + 24 * s, b.Top + 64 * s, 15 * s, Pal.Dim);
+            DrawText(canvas, "（或音频服务不可用，音量控制暂时不可用）",
+                b.Left + 24 * s, b.Top + 88 * s, 12 * s, Pal.Dim);
+            return;
+        }
+
+        float shown = muted ? 0f : Math.Clamp(level, 0f, 1f);
+        DrawText(canvas, muted ? "已静音" : $"{Math.Round(shown * 100)}%",
+            b.Left + 24 * s, b.Top + 62 * s, 32 * s, Pal.Fg);
+        DrawText(canvas, "主音量", b.Left + 24 * s, b.Top + 86 * s, 12 * s, Pal.Dim);
+
+        var track = VolumePageTrack(b, s);
+        DrawMaterialSurface(canvas, track, track.Height / 2, Pal.Track);
+        float fillW = track.Width * shown;
+        if (fillW > 0.5f)
+        {
+            using var fp = new SKPaint { Color = muted ? Pal.Dim : ac, IsAntialias = true };
+            canvas.DrawRoundRect(new SKRect(track.Left, track.Top, track.Left + fillW, track.Bottom),
+                track.Height / 2, track.Height / 2, fp);
+        }
+        using (var kp = new SKPaint { Color = Pal.Fg, IsAntialias = true })
+            canvas.DrawCircle(track.Left + fillW, track.MidY, 8 * s, kp);
+
+        var mute = VolumePageMute(b, s);
+        using (var mb = new SKPaint
+        {
+            Color = muted ? BackgroundAlpha(ac, 60) : Pal.Card,
+            IsAntialias = true,
+        })
+            canvas.DrawRoundRect(mute, 10 * s, 10 * s, mb);
+        DrawText(canvas, muted ? "取消静音" : "静音", mute.Left + 14 * s, mute.MidY + 4.5f * s,
+            12.5f * s, muted ? Pal.Fg : Pal.Sub);
+    }
+
     private void DrawPageQuick(SKCanvas canvas, SKRect b, float s)
     {
         DrawText(canvas, "第一行单击执行 · 危险动作按住 0.9 秒 · 点「＋」添加自定义程序",

@@ -1086,6 +1086,17 @@ internal static class Diag
                 appGlass.ForceFocus("timer");
                 appGlass.ForcePage(0);
             }),
+            // 「音量」页：注入 42% 出图（真机没声卡也能看布局）
+            ("page-volume", () =>
+            {
+                appPages.InjectVolume(0.42f);
+                appPages.ForcePage(NativeIslandApp.VolumePageIndex);
+            }),
+            ("page-volume-muted", () =>
+            {
+                appPages.InjectVolume(0.42f, muted: true);
+                appPages.ForcePage(NativeIslandApp.VolumePageIndex);
+            }),
             ("page-quick-glass", () =>
             {
                 appGlass.ForceMode("expanded");
@@ -1152,6 +1163,7 @@ internal static class Diag
             ["page-plan"] = appPages, ["page-perf"] = appPages, ["page-weather"] = appPages,
             ["page-tasks"] = appPages, ["page-month"] = appPages,
             ["page-quick"] = appPages, ["page-quick-hold-forced"] = appPages,
+            ["page-volume"] = appPages, ["page-volume-muted"] = appPages,
             ["compact-clock-glass"] = appGlass, ["compact-clock-glass-40"] = appGlass40,
             ["expanded-plan-glass"] = appGlass, ["page-quick-glass"] = appGlass,
             ["expanded-media-style-b-glass"] = appGlassB, ["expanded-media-style-c-glass"] = appGlassC,
@@ -1678,14 +1690,15 @@ internal static class Diag
     }
 
     // ==================================================================
-    // --volume-probe ：真机验证「设置窗口的音量控制」真的能读写系统音量
+    // --volume-probe ：真机验证「岛上的音量页」真的能读写系统音量
     // ==================================================================
     private static int VolumeProbe(TextWriter w)
     {
         w.WriteLine("========== --volume-probe ==========");
-        w.WriteLine("# 为什么必须真机验：音量走 AudioEndpointVolume 这个**非敏捷 COM 对象**，");
-        w.WriteLine("#   而且服务内部把异常吞成\"设备不可用\"——跨线程误用不会崩，只会静默变灰。");
-        w.WriteLine("#   所以这里真读一次、真写一次再回读校验，写完把原值还原（不动用户音量）。");
+        w.WriteLine("# 音量页在**岛上**，读写都在岛线程上发生——AudioEndpointVolume 是非敏捷 COM 对象，");
+        w.WriteLine("#   而服务内部把异常吞成\"设备不可用\"：跨线程误用不会崩，只会静默变灰。");
+        w.WriteLine("#   所以这里真读一次、真写一次再回读，走的是和点击完全同一条生产代码路径，");
+        w.WriteLine("#   测完把原值还原（不动用户音量）。");
         w.WriteLine();
 
         int failed = 0;
@@ -1699,63 +1712,64 @@ internal static class Diag
         using var media = new MediaSessionService();
         using var vol = new Services.AudioVolumeService();
         using var island = new Ui.NativeIslandApp(cfg, media, null, null, null, null, vol);
-        island.Start();     // 音量桥靠岛线程抽 Post 队列，不启动就没有回调
+        island.Start();     // 面板绘制与音量读写都在岛线程上
         Pump(0.9);
 
-        bool readDone = false;
-        bool available = false, muted0 = false;
-        float volume0 = 0f;
-        island.ReadVolumeForSettings(s => { available = s.Available; volume0 = s.Volume; muted0 = s.Muted; readDone = true; });
-        for (int i = 0; i < 60 && !readDone; i++) Pump(0.05);
+        // 页签里确实有「音量」，而且没把既有的「快捷」下标挤动
+        Check("音量页：页签里有它、且快捷页下标没被挤动",
+            Ui.NativeIslandApp.PageNames[Ui.NativeIslandApp.VolumePageIndex] == "音量"
+            && Ui.NativeIslandApp.QuickPageIndex == 5,
+            $"pages={string.Join("/", Ui.NativeIslandApp.PageNames)}");
 
-        if (!readDone)
+        island.VolumePageRefreshForTest();
+        (bool Available, float Level, bool Muted) state = default;
+        for (int i = 0; i < 60; i++)
         {
-            Check("音量桥：回调回到主线程（岛线程在跑、Post 队列被抽干）", false, "回调一直没回来");
+            Pump(0.05);
+            state = island.VolumePageStateForTest;
+            if (state.Available) break;
+        }
+        w.WriteLine($"岛线程读到：可用={state.Available}　音量={state.Level:P0}　静音={state.Muted}");
+        if (!state.Available)
+        {
+            w.WriteLine("!! 当前没有可用播放设备 —— 跳过读写校验（不算失败）");
             w.WriteLine();
             return failed;
         }
-        Check("音量桥：回调回到主线程（岛线程在跑、Post 队列被抽干）", true);
-        w.WriteLine($"读到的现状：可用={available}　音量={volume0:P0}　静音={muted0}");
+        Check("音量页：能读到真实设备音量（岛线程上直接读，没有跨线程问题）", true);
 
-        if (!available)
+        float original = state.Level;
+        bool muted0 = state.Muted;
+
+        // 走"和点击完全相同"的路径设 37%
+        island.VolumePageSetForTest(0.37f);
+        for (int i = 0; i < 60; i++)
         {
-            w.WriteLine("!! 当前没有可用播放设备 —— 跳过读写校验（不算失败，换台有声卡的机器再跑）");
-            w.WriteLine();
-            return failed;
+            Pump(0.05);
+            state = island.VolumePageStateForTest;
+            if (Math.Abs(state.Level - 0.37f) <= 0.02f) break;
         }
+        w.WriteLine($"设 37% 后页面显示 = {state.Level:P0}");
+        Check("音量页：改音量真的落到系统上（回读一致）",
+            Math.Abs(state.Level - 0.37f) <= 0.02f, $"回读={state.Level:P1}");
 
-        // 写 37% 再回读
-        island.SetVolumeForSettings(0.37f);
-        Pump(0.6);
-        bool got2 = false;
-        float back = 0f;
-        island.ReadVolumeForSettings(s => { back = s.Volume; got2 = true; });
-        for (int i = 0; i < 60 && !got2; i++) Pump(0.05);
-        w.WriteLine($"写入 37% 后回读 = {back:P0}");
-        Check("音量桥：写入能落到系统音量上（回读一致）",
-            got2 && Math.Abs(back - 0.37f) <= 0.02f, $"回读={back:P1}");
-
-        // 静音切换：切一次必须变，再切一次回到原状态
-        island.ToggleMuteForSettings();
-        Pump(0.6);
-        bool got3 = false, mute1 = !muted0;
-        island.ReadVolumeForSettings(s => { mute1 = s.Muted; got3 = true; });
-        for (int i = 0; i < 60 && !got3; i++) Pump(0.05);
-        Check("音量桥：静音能切换（切一次状态真的变）", got3 && mute1 != muted0,
-            $"原={muted0} 切后={mute1}");
-        island.ToggleMuteForSettings();
-        Pump(0.6);
-
-        // 还原用户的音量与静音状态
-        island.SetVolumeForSettings(volume0);
+        island.VolumePageToggleMuteForTest();
+        for (int i = 0; i < 60; i++)
+        {
+            Pump(0.05);
+            state = island.VolumePageStateForTest;
+            if (state.Muted != muted0) break;
+        }
+        Check("音量页：静音能切换（切一次状态真的变）", state.Muted != muted0,
+            $"原={muted0} 切后={state.Muted}");
+        island.VolumePageToggleMuteForTest();
         Pump(0.5);
-        bool got4 = false;
-        float restored = 0f;
-        island.ReadVolumeForSettings(s => { restored = s.Volume; got4 = true; });
-        for (int i = 0; i < 60 && !got4; i++) Pump(0.05);
-        w.WriteLine($"已还原为原音量 {volume0:P0}（回读 {restored:P0}）");
 
-        // 对照：把服务放到别的线程上创建、再从主线程用 —— 就是"直接在设置窗口里调"的等价写法
+        island.VolumePageSetForTest(original);
+        Pump(0.5);
+        w.WriteLine($"已还原为原音量 {original:P0}（回读 {island.VolumePageStateForTest.Level:P0}）");
+
+        // 对照：把同一个服务放到别的线程上创建、再从主线程用 —— 就是"把音量页做进设置窗口"的等价写法
         Services.AudioVolumeService? cross = null;
         var t = new Thread(() =>
         {
@@ -1768,20 +1782,8 @@ internal static class Diag
         t.Join();
         float? crossRead = cross?.GetVolume();
         w.WriteLine($"对照：跨线程直接调（服务在别的线程上创建）→ "
-                    + (crossRead is null ? "返回 null（异常被吞成\"设备不可用\"，界面会整块灰掉）" : $"{crossRead:P0}"));
+                    + (crossRead is null ? "返回 null（异常被吞成\"设备不可用\"）" : $"{crossRead:P0}"));
         try { cross?.Dispose(); } catch { /* ignore */ }
-
-        // 整条链：设置窗口 → 切到音量页 → 轮询回读 → 值落到控件上
-        var win = new Ui.SettingsWindow(cfg, island, () => { });
-        win.Show();
-        win.SelectSectionForTest("volume");
-        Pump(1.8);          // 等一次 1 秒轮询 + 回调切回 UI 线程
-        var (uiEnabled, uiLabel, uiMuted) = win.VolumeUiForTest;
-        w.WriteLine($"设置窗口音量页：滑杆可用={uiEnabled}　显示=\"{uiLabel}\"　静音勾选={uiMuted}");
-        Check("设置窗口音量页：真的把系统音量显示出来了（不是空白也不是灰）",
-            uiEnabled && uiLabel.Contains('%'), $"enabled={uiEnabled} label=\"{uiLabel}\"");
-        Check("设置窗口音量页：静音勾选与系统一致", uiMuted == muted0, $"勾选={uiMuted} 系统={muted0}");
-        win.Close();
         w.WriteLine();
         return failed;
     }
@@ -2540,7 +2542,29 @@ internal static class Diag
                     popup.Bottom < glyph.Top && popup.MidX == glyph.MidX
                     && groove.Top >= popup.Top && groove.Bottom <= popup.Bottom
                     && NativeIslandApp.VolumeMuteRect(popup, 1f).Bottom <= groove.Top);
-                Check("音量：纵向位置换算（顶部=1、底部=0、越界钳住）",
+                // 「音量」页（岛上的第 7 页）：页签顺序 + 几何（绘制与命中共用，算错就点不准）
+            {
+                Check("音量页：页签里有它、追加在最后（快捷页下标没被挤动）",
+                    NativeIslandApp.PageNames[NativeIslandApp.VolumePageIndex] == "音量"
+                    && NativeIslandApp.PageNames.Length == 7
+                    && NativeIslandApp.QuickPageIndex == 5);
+                var volBody = new SKRect(24, 56, 24 + 424, 56 + 229);
+                var volTrack = NativeIslandApp.VolumePageTrack(volBody, 1f);
+                var volMute = NativeIslandApp.VolumePageMute(volBody, 1f);
+                Check("音量页：横条与静音钮都在内容区内、互不重叠",
+                    volTrack.Left >= volBody.Left && volTrack.Right <= volBody.Right
+                    && volTrack.Top >= volBody.Top && volTrack.Bottom <= volBody.Bottom
+                    && volMute.Left >= volBody.Left && volMute.Right <= volBody.Right
+                    && volMute.Top >= volTrack.Bottom && volMute.Bottom <= volBody.Bottom,
+                    $"track={volTrack} mute={volMute}");
+                Check("音量页：横向位置换算（左端=0、右端=1、越界钳住）",
+                    Math.Abs(NativeIslandApp.VolumeFromX(volTrack, volTrack.Left)) < 0.001
+                    && Math.Abs(NativeIslandApp.VolumeFromX(volTrack, volTrack.Right) - 1) < 0.001
+                    && Math.Abs(NativeIslandApp.VolumeFromX(volTrack, volTrack.MidX) - 0.5) < 0.02
+                    && NativeIslandApp.VolumeFromX(volTrack, volTrack.Left - 999) == 0
+                    && NativeIslandApp.VolumeFromX(volTrack, volTrack.Right + 999) == 1);
+            }
+            Check("音量：纵向位置换算（顶部=1、底部=0、越界钳住）",
                     Math.Abs(NativeIslandApp.VolumeFromY(groove, groove.Top) - 1) < 0.001
                     && Math.Abs(NativeIslandApp.VolumeFromY(groove, groove.Bottom) - 0) < 0.001
                     && Math.Abs(NativeIslandApp.VolumeFromY(groove, groove.MidY) - 0.5) < 0.02

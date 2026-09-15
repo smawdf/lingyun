@@ -33,12 +33,6 @@ public sealed class SettingsWindow : Window
     private readonly Slider _offsetX = NewSlider(-280, 280);
     private readonly Slider _offsetY = NewSlider(0, 200);
     private readonly Slider _opacity = NewSlider(40, 100);
-    private readonly Slider _volume = NewSlider(0, 100);
-    private readonly TextBlock _volumeLabel = new();
-    private readonly TextBlock _volumeNote = new();
-    private readonly CheckBox _mute = new();
-    /// <summary>正在把系统音量回填到控件——别把这次改动当成用户操作再写回去。</summary>
-    private bool _volumePushing;
     private readonly Slider _winOpacity = NewSlider(40, 100);
     private readonly TextBlock _winOpacityLabel = new();
     private readonly RadioButton _winOpacityFollow = new();
@@ -174,14 +168,8 @@ public sealed class SettingsWindow : Window
         _ready = true;
 
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
-        // 音量页每秒回读一次：用户可能用音量键/任务栏改了音量，界面不该显示旧值
-        _volumeTimer.Tick += (_, _) =>
-        {
-            if (IsVisible && _currentSection == "volume") RefreshVolume();
-        };
         Closed += (_, _) =>
         {
-            _volumeTimer.Stop();
             try { _save(); } catch { /* 写盘失败不致命 */ }
         };
         // 有 HWND 之后：把自己从抓屏里排除（否则抓"背后的屏幕"抓到的是自己），并关掉 DWM 圆角
@@ -205,8 +193,6 @@ public sealed class SettingsWindow : Window
             PlaceBelowIsland();
             UpdatePanelClip();
         };
-        // 重新获得焦点时也回读一次（刚才可能用音量键/任务栏改过）
-        Activated += (_, _) => { if (_currentSection == "volume") RefreshVolume(); };
     }
 
     private const int WM_NCHITTEST = 0x0084;
@@ -283,7 +269,6 @@ public sealed class SettingsWindow : Window
         AddSection("look", "◐", "外观", BuildLookPane());
         AddSection("layout", "▭", "位置与大小", BuildLayoutPane());
         AddSection("content", "☰", "显示内容", BuildContentPane());
-        AddSection("volume", "🔊", "音量", BuildVolumePane());
         AddSection("lyrics", "♪", "歌词", BuildLyricsPane());
         AddSection("about", "ⓘ", "关于", BuildAboutPane());
         SelectSection("look");
@@ -404,9 +389,6 @@ public sealed class SettingsWindow : Window
         foreach (UIElement child in _panes.Children)
             child.Visibility = child is FrameworkElement fe && fe.Tag as string == key
                 ? Visibility.Visible : Visibility.Collapsed;
-        // 音量只在这一页轮询（读的是岛线程上的 COM，没必要常驻）
-        if (key == "volume") { RefreshVolume(); _volumeTimer.Start(); }
-        else _volumeTimer.Stop();
         RefreshStates();
     }
 
@@ -529,88 +511,8 @@ public sealed class SettingsWindow : Window
         ApplyMaterial();
     }
 
-    private readonly DispatcherTimer _volumeTimer =
-        new(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
-
-    /// <summary>
-    /// 「音量」分区：直接控电脑主音量，不用先点开岛的媒体页（没在放歌时岛上没有音量入口）。
-    /// 读写在**岛线程**上做（COM 非敏捷，见 NativeIslandApp.ReadVolumeForSettings），
-    /// 所以这里只发请求、把结果切回 UI 线程再落到控件上。
-    /// </summary>
-    private FrameworkElement BuildVolumePane()
-    {
-        var root = NewPane("volume", "音量", "直接控制电脑主音量，不必先展开岛的媒体页。");
-        var card = NewCard(root);
-        AddSlider(card, "主音量", _volume, _volumeLabel, v =>
-        {
-            if (_volumePushing) return;          // 系统状态回填触发的，不要再写回去
-            _volumeLabel.Text = $"  {v:0}%";
-            _island.SetVolumeForSettings((float)(v / 100.0));
-        });
-        AddCheck(card, _mute, "静音", "让电脑整体静音（与系统音量键/托盘图标等效）", on =>
-        {
-            if (_volumePushing) return;
-            _island.ToggleMuteForSettings();
-            _ = on;
-        });
-        _volumeNote.FontSize = 11;
-        _volumeNote.Foreground = _dim;
-        _volumeNote.TextWrapping = TextWrapping.Wrap;
-        _volumeNote.Margin = new Thickness(0, 4, 0, 4);
-        root.Children.Add(_volumeNote);
-
-        AddGroupLabel(root, "系统声音");
-        card = NewCard(root);
-        var openSound = NavStyleButton("打开 Windows 声音设置", double.NaN);
-        openSound.Padding = new Thickness(12, 0, 12, 0);
-        openSound.HorizontalAlignment = HorizontalAlignment.Left;
-        openSound.Click += (_, _) => OpenPath("ms-settings:sound");
-        card.Children.Add(openSound);
-        AddHint(root, "音量键、任务栏音量图标改动后，这一页每秒回读一次，不会显示旧值。"
-                      + "输出设备切换、按应用单独调音量属于 Windows 音量合成器的能力，暂未集成。");
-        return root;
-    }
-
-    /// <summary>向岛线程要一次音量快照（回调在岛线程，必须切回 UI 线程再动控件）。</summary>
-    private void RefreshVolume()
-    {
-        if (!_ready) return;
-        _island.ReadVolumeForSettings(snapshot =>
-            Dispatcher.BeginInvoke(new Action(() => ApplyVolumeSnapshot(snapshot))));
-    }
-
-    private void ApplyVolumeSnapshot(Ui.NativeIslandApp.VolumeSnapshot s)
-    {
-        _volumePushing = true;
-        try
-        {
-            _volume.IsEnabled = s.Available;
-            _mute.IsEnabled = s.Available;
-            if (s.Available)
-            {
-                _volume.Value = Math.Round(s.Volume * 100);
-                _volumeLabel.Text = $"  {_volume.Value:0}%";
-                _mute.IsChecked = s.Muted;
-                _volumeNote.Text = "";
-            }
-            else
-            {
-                _volumeLabel.Text = "  —";
-                _volumeNote.Text = "没有找到可用的播放设备（或音频服务不可用），音量控制暂时不可用。";
-            }
-        }
-        finally { _volumePushing = false; }
-    }
-
     /// <summary>设置窗口实际生效的不透明度（可跟随岛）。</summary>
     private int WindowOpacity => AppConfig.WindowOpacityFor(_cfg.WindowOpacity, _cfg.Opacity);
-
-    /// <summary>诊断用：音量页控件现在的状态（验证"岛线程读数 → UI 线程落控件"整条链真的通）。</summary>
-    internal (bool SliderEnabled, string Label, bool Muted) VolumeUiForTest
-        => (_volume.IsEnabled, _volumeLabel.Text, _mute.IsChecked == true);
-
-    /// <summary>诊断用：切到某个分区（--volume-probe 要触发音量页的首次回读）。</summary>
-    internal void SelectSectionForTest(string key) => SelectSection(key);
 
     /// <summary>诊断用：当前实际生效的窗口不透明度。</summary>
     internal int WindowOpacityForTest => WindowOpacity;

@@ -13,14 +13,14 @@
 | **SMTC 媒体会话** | `Services/MediaSessionService.cs` | CsWinRT 直连，无 PS 桥；多会话选源 + 浏览器标题清理 |
 | 性能采样 / 天气 | `Services/Monitors.cs` | CPU/内存/网络 + Open-Meteo；定位链=手填优先 → Windows 系统定位（STA 泵线程宿主 WinRT）→ IP 兜底 |
 | 音频频谱 | `Services/AudioSpectrumService.cs` | WASAPI 环回 + 5 段 Goertzel + AGC；派生自 NotchPeninsula（Apache-2.0，见 THIRD-PARTY.md） |
-| 系统音量 | `Services/AudioVolumeService.cs` | 主音量读写 + 静音切换；派生自 NotchPeninsula `Audio.cs`；无设备时整行隐藏 |
+| 系统音量 | `Services/AudioVolumeService.cs` | 主音量读写 + 静音切换；派生自 NotchPeninsula `Audio.cs`；无设备时整行隐藏。岛上「音量」页与媒体页的音量弹出条都直接用它——**这些代码都在岛线程上跑**，而 AudioEndpointVolume 是非敏捷 COM 对象，跨线程误用会被服务的 try/catch 吞成"设备不可用"（静默错），别把它挪到别的线程去调 |
 | 在线歌词 | `Services/LyricsService.cs` | LRCLIB 同步歌词（LRC 解析 + 按播放位置取句）；离线/查不到静默留空 |
 | 单实例 + 命名管道唤出 | `Platform/SingleInstance.cs` | 含 `WindowFocus`（跳源窗口） |
 | 开机自启 | `Platform/AutoStart.cs` | HKCU Run |
 | 托盘 | `Platform/TrayService.cs` | 显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 显示歌词 / 浅色主题 / 开机自启 / 退出 |
 | 设置窗口控件长相 | `Ui/SettingsWindow.cs`（模板部分） | 药丸单选 / 开关 / 扁平按钮都用自定义 ControlTemplate，**去掉 WPF 默认模板的 Aero 悬停蓝**；经典档显式交回系统默认模板；标题栏必须有 `Transparent` 背景（`null` 不参与命中测试 → 拖不动，自测用 `InputHitTest` 钉住） |
 | 设置窗口材质 | `Platform/WindowMaterial.cs` | 分层窗（`AllowsTransparency`，四角真透明无黑框）；材质由 `theme` 推导（`SettingsWindow.MaterialFor`）：**亚克力**走 accent 系统模糊（DWM 合成、移动零延迟），**液态玻璃**与岛同款清晰透明；色调只画一次（亚克力交给 DWM、玻璃由 WPF 画并跟随透明度）；圆角只有亚克力裁窗口区域（`NeedsRegion`），玻璃由 Border 自绘避免锯齿弧 |
-| 岛设置（主页式） | `Ui/SettingsWindow.cs` | 左侧六个分区（外观 / 位置与大小 / 显示内容 / 音量 / 歌词 / 关于）+ 右侧内容，820×580 固定尺寸；含界面材质三档、岛主题四选一、背景透明度（滑杆 + 三档预设）、胶囊/展开缩放、位置、显示器切换、组合模式与模块、网速、通知、自动隐藏、音量（主音量 + 静音 + 打开系统声音设置；读写必须回到岛线程，见 NativeIslandApp.ReadVolumeForSettings）、歌词（卡拉OK/延迟）、自启、诊断入口；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
+| 岛设置（主页式） | `Ui/SettingsWindow.cs` | 左侧五个分区（外观 / 位置与大小 / 显示内容 / 歌词 / 关于）+ 右侧内容，820×580 固定尺寸；含界面材质三档、岛主题四选一、背景透明度（滑杆 + 三档预设）、胶囊/展开缩放、位置、显示器切换、组合模式与模块、网速、通知、自动隐藏、歌词（卡拉OK/延迟）、自启、诊断入口；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
 | 多显示器 | `Platform/Displays.cs` | 按工作区落位，拔屏自动回退 |
 | 自动隐藏 | `Ui/NativeIslandApp.cs`（`UpdateAutoHide`） | 默认关闭：无媒体且鼠标离开 10s 收起，光标到工作区顶部 4px 或媒体/通知/托盘唤出时恢复 |
 | 系统通知 | `Services/ToastService.cs` | WinRT `UserNotificationListener` 轮询；启动高水位（历史通知不回放）、带 AUMID/Id |
@@ -36,7 +36,7 @@
 ## 交互模型（重要）
 
 - **紧凑态永远只有时间 / 媒体 / 通知**，没有任何功能按钮，也不响应悬停；
-- 所有功能在**点击展开后的面板**里：页签 计划 / 性能 / 天气 / **日程** / **日历** / **快捷**（滚轮或点击切换）；
+- 所有功能在**点击展开后的面板**里：页签 计划 / 性能 / 天气 / **日程** / **日历** / **快捷** / **音量**（滚轮或点击切换）；
 - 系统通知到达时**抢占胶囊**（约 6 秒，含媒体播放中），点击唤醒来源应用；
 - 组合模式（默认关闭）下胶囊同屏显示 时间 + 硬件 + 媒体，宽度按内容自动伸缩；
   三个「定宽槽」（时钟按 `88:88`、百分比按 `100%`、网速按 `999.9 MB/s`）保证倒计时/数字跳动时宽度不抖；
