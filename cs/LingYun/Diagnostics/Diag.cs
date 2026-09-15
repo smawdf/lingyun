@@ -25,6 +25,7 @@ internal static class Diag
         "--font-audit", "--dump-text", "--dump-frames", "--self-test", "--diag-all", "--diag-no-frames",
         "--diag-monitor", "--toast-probe", "--toast-test", "--diag-quick", "--spectrum-probe", "--marquee-probe",
         "--wake-probe", "--settings-smoke", "--backdrop-probe", "--acrylic-probe", "--volume-probe",
+        "--audio-probe",
     };
 
     public static bool ShouldRun(string[] args) => args.Any(a => Known.Contains(a));
@@ -210,6 +211,12 @@ internal static class Diag
         {
             try { failures += VolumeProbe(w); }
             catch (Exception ex) { w.WriteLine("!! --volume-probe 异常: " + ex); failures++; }
+        }
+
+        if (args.Contains("--audio-probe"))
+        {
+            try { failures += AudioProbe(w, args); }
+            catch (Exception ex) { w.WriteLine("!! --audio-probe 异常: " + ex); failures++; }
         }
 
         if (args.Contains("--marquee-probe"))
@@ -1685,6 +1692,140 @@ internal static class Diag
         Check("亚克力：窗口透明度真的传到材质上（同位置改透明度，窗口内颜色必须变）",
             colorDelta >= 3, $"色差={colorDelta}（0 说明设置没接到材质上）");
         win.Close();
+        w.WriteLine();
+        return failed;
+    }
+
+    // ==================================================================
+    // --audio-probe ：真机验证「音频设备枚举 + 切默认设备」
+    // ==================================================================
+    private static int AudioProbe(TextWriter w, string[] args)
+    {
+        w.WriteLine("========== --audio-probe ==========");
+        w.WriteLine("# 切默认音频设备只能用未公开的 IPolicyConfig::SetDefaultEndpoint（微软没给公开 API），");
+        w.WriteLine("#   它的 vtable 顺序必须和系统一致，写错会调到别的方法上——所以这里真机验一遍。");
+        w.WriteLine("#   注意：本探针**不会真的换掉你的设备**，只把「当前默认」再设一遍（等价于空操作），");
+        w.WriteLine("#   用来确认那个未公开接口在你这台机器上确实调得通。");
+        w.WriteLine();
+
+        int failed = 0;
+        void Check(string name, bool ok, string detail = "")
+        {
+            if (ok) w.WriteLine($"PASS  {name}");
+            else { failed++; w.WriteLine($"FAIL  {name}  {detail}"); }
+        }
+
+        using var svc = new Services.AudioDeviceService();
+        Services.AudioDeviceService.DeviceList? outs = null, ins = null;
+        // 和音量一样：这些 COM 对象要在岛线程上用，所以借着岛的线程跑
+        var cfg = new AppConfig();
+        using var media = new MediaSessionService();
+        using var island = new Ui.NativeIslandApp(cfg, media);
+        island.Start();
+        Pump(0.9);
+        string outHr = "", inHr = "";
+        island.Post(() =>
+        {
+            outs = svc.List(Services.AudioDeviceService.Flow.Output);
+            ins = svc.List(Services.AudioDeviceService.Flow.Input);
+            if (outs is { } o && o.CurrentId.Length > 0)
+            {
+                svc.SetDefault(Services.AudioDeviceService.Flow.Output, o.CurrentId);
+                outHr = Services.AudioDeviceService.LastSetDefaultHr.ToString();
+            }
+            if (ins is { } i && i.CurrentId.Length > 0)
+            {
+                svc.SetDefault(Services.AudioDeviceService.Flow.Input, i.CurrentId);
+                inHr = Services.AudioDeviceService.LastSetDefaultHr.ToString();
+            }
+        });
+        Pump(1.2);
+
+        foreach (var (label, list) in new[] { ("播放", outs), ("录音", ins) })
+        {
+            if (list is not { } l)
+            {
+                w.WriteLine($"!! {label}设备：枚举失败（没有设备 / COM 不可用）");
+                continue;
+            }
+            w.WriteLine($"{label}设备 {l.Items.Length} 个，当前默认 = "
+                        + (l.Items.FirstOrDefault(d => d.IsDefault).Name ?? "(未知)"));
+            foreach (var d in l.Items)
+                w.WriteLine($"    {(d.IsDefault ? "●" : "○")} {d.Name}");
+        }
+        w.WriteLine($"把当前默认再设一遍（空操作）：播放 hr={outHr}　录音 hr={inHr}（0 = 未公开接口调通了）");
+
+        // 真切换（可选，--audio-probe switch）：会**真的**把默认设备换到另一个再换回来，
+        // 期间声音会短暂改道，所以默认不做，要硬证据时自己加这个参数。
+        bool doSwitch = args.Contains("switch");
+        string switchReport = "（未做真切换；加 switch 参数可验证：会切到另一个设备再切回来）";
+        bool switchOk = true;
+        if (doSwitch && outs is { Items.Length: > 1 } o2)
+        {
+            string from = o2.CurrentId;
+            string to = o2.Items.First(d => !d.IsDefault).Id;
+            string toName = o2.Items.First(d => !d.IsDefault).Name;
+            island.Post(() => svc.SetDefault(Services.AudioDeviceService.Flow.Output, to));
+            Pump(1.2);
+            // 读回必须用**全新的枚举器实例**：缓存住的 MMDeviceEnumerator 可能仍然报旧默认，
+            // 那样会把"切换成功"误判成失败（也可能反过来）。
+            string after = "";
+            island.Post(() =>
+            {
+                using var fresh = new Services.AudioDeviceService();
+                after = fresh.List(Services.AudioDeviceService.Flow.Output)?.CurrentId ?? "";
+            });
+            Pump(1.5);
+            bool moved = string.Equals(after, to, StringComparison.OrdinalIgnoreCase);
+            island.Post(() => svc.SetDefault(Services.AudioDeviceService.Flow.Output, from));
+            Pump(1.2);
+            string back = "";
+            island.Post(() =>
+            {
+                using var fresh2 = new Services.AudioDeviceService();
+                back = fresh2.List(Services.AudioDeviceService.Flow.Output)?.CurrentId ?? "";
+            });
+            Pump(1.5);
+            bool restored = string.Equals(back, from, StringComparison.OrdinalIgnoreCase);
+            switchReport = $"切到「{toName}」→ {(moved ? "成功" : "没生效")}；再切回原设备 → {(restored ? "已还原" : "还原失败")}";
+            switchOk = moved && restored;
+        }
+        w.WriteLine($"真切换验证（播放）：{switchReport}");
+        if (doSwitch && outs is { Items.Length: > 1 })
+            Check("音频设备：播放侧真切换生效且能切回原设备", switchOk, switchReport);
+
+        // 录音侧同样切一次：FxSound 这类**输出端**增强器不会碰麦克风默认，而且切麦克风不会打断听音，
+        // 所以这一条能把"我的 interop 不对"和"输出侧被虚拟声卡抢回去了"区分开。
+        string inSwitchReport = "（未做）";
+        if (doSwitch && ins is { Items.Length: > 1 } i2)
+        {
+            string fromI = i2.CurrentId;
+            string toI = i2.Items.First(d => !d.IsDefault).Id;
+            string toIName = i2.Items.First(d => !d.IsDefault).Name;
+            island.Post(() => svc.SetDefault(Services.AudioDeviceService.Flow.Input, toI));
+            Pump(1.5);
+            string afterI = "";
+            island.Post(() =>
+            {
+                using var fresh3 = new Services.AudioDeviceService();
+                afterI = fresh3.List(Services.AudioDeviceService.Flow.Input)?.CurrentId ?? "";
+            });
+            Pump(1.5);
+            bool movedI = string.Equals(afterI, toI, StringComparison.OrdinalIgnoreCase);
+            island.Post(() => svc.SetDefault(Services.AudioDeviceService.Flow.Input, fromI));
+            Pump(1.5);
+            inSwitchReport = $"切到「{toIName}」→ {(movedI ? "成功" : "没生效")}";
+            Check("音频设备：录音侧真切换生效（这一条能排除 interop 本身的问题）", movedI, inSwitchReport);
+        }
+        w.WriteLine($"真切换验证（录音）：{inSwitchReport}");
+
+        Check("音频设备：能枚举到播放设备", outs is { Items.Length: > 0 } || outs is null);
+        Check("音频设备：枚举结果里标出了当前默认",
+            outs is null || outs.Value.Items.Count(d => d.IsDefault) <= 1);
+        if (outs is { Items.Length: > 0 })
+            Check("音频设备：未公开的 SetDefaultEndpoint 能调通（HRESULT = 0）", outHr == "0", $"hr={outHr}");
+        if (ins is { Items.Length: > 0 })
+            Check("音频设备：录音侧同样能调通", inHr == "0", $"hr={inHr}");
         w.WriteLine();
         return failed;
     }

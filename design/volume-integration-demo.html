@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>音量 + 音频设备 · 并进「快捷」页（B 方案）</title>
+<style>
+  :root{
+    --body:#000; --fg:#fff; --sub:#a0a0a0; --dim:#8c8c8c;
+    --accent:#60cdff; --track:rgba(255,255,255,.14); --card:rgba(255,255,255,.067);
+    --line:rgba(255,255,255,.10);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 24px 48px;background:#17181c;color:#e8eaee;
+    font:13px/1.6 "Microsoft YaHei UI","Segoe UI",sans-serif}
+  h1{margin:0 0 6px;font-size:19px;font-weight:600}
+  .lead{margin:0 0 20px;color:#9aa0aa;font-size:12.5px;max-width:940px}
+  .lead code{color:#c9d4e2}
+  .row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+  .item{width:460px}
+  .cap{margin:0 0 8px;font-size:13.5px}
+  .cap b{color:#fff}
+  .cap span{color:#9aa0aa;font-size:12px}
+  .note{margin:10px 0 0;font-size:12px;color:#9aa0aa}
+  .note em{color:#e0b062;font-style:normal}
+  .warn{margin:16px 0 0;padding:10px 12px;border-left:3px solid #e0b062;background:rgba(224,176,98,.07);
+    font-size:12px;color:#c9b48a;max-width:940px}
+
+  .panel{position:relative;width:460px;height:320px;background:var(--body);
+    border:1px solid var(--line);border-radius:24px;overflow:hidden}
+  .tabs{display:flex;gap:4px;padding:14px 18px 0;font-size:12.5px;color:var(--sub)}
+  .tab{padding:4px 8px;border-radius:8px}
+  .tab.on{color:var(--accent);background:rgba(96,205,255,.13)}
+  .hair{height:1px;background:rgba(96,205,255,.45);margin:8px 18px 0}
+  .body{padding:14px 18px 0}
+  .hint{position:absolute;left:18px;bottom:12px;font-size:11.5px;color:var(--dim)}
+
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .cell{height:64px;border-radius:14px;background:var(--card);display:grid;place-items:center;gap:2px;
+    font-size:11px;color:var(--sub)}
+  .ball{width:22px;height:22px;border-radius:50%;background:rgba(96,205,255,.2);
+    display:grid;place-items:center;color:var(--accent);font-size:11px}
+  .ball.d{background:rgba(255,107,107,.18);color:#ff6b6b}
+
+  .sect{margin-top:11px;padding-top:9px;border-top:1px solid var(--line)}
+  .vol{display:flex;align-items:center;gap:9px}
+  .vol .spk{font-size:14px;color:var(--accent)}
+  .bar{position:relative;flex:1;height:8px;border-radius:4px;background:var(--track)}
+  .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--accent)}
+  .bar b{position:absolute;top:50%;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;border-radius:50%;background:#fff}
+  .pc{font-size:12px;color:var(--sub);min-width:34px;text-align:right}
+  .mute{padding:2px 8px;border:1px solid var(--line);border-radius:8px;font-size:11px;color:var(--sub)}
+
+  .dev{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:12px;color:var(--sub)}
+  .dev .k{color:var(--dim);width:52px;flex:none}
+  .dev .v{flex:1;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dev .go{color:var(--accent);font-size:11.5px}
+
+  /* 展开态的设备列表 */
+  .list{margin-top:8px}
+  .opt{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:10px;font-size:12px;color:var(--sub)}
+  .opt.on{background:rgba(96,205,255,.13);color:var(--fg)}
+  .opt .dot{width:6px;height:6px;border-radius:50%;background:var(--dim);flex:none}
+  .opt.on .dot{background:var(--accent)}
+  .opt .tag{margin-left:auto;font-size:10.5px;color:var(--accent)}
+  .grouphdr{display:flex;gap:8px;align-items:center;margin:9px 0 2px;font-size:11.5px;color:var(--dim)}
+  .grouphdr .sw{margin-left:auto;color:var(--accent);font-size:11px}
+</style>
+</head>
+<body>
+
+<h1>B 方案（并进「快捷」页）+ 音频设备选择</h1>
+<p class="lead">
+  左：折叠态（现在这样一点点，动作格下面一条音量 + 两行设备名）。右：点了设备名之后在这一页里就地展开的选择列表。
+  尺寸配色照 <code>NativeIslandApp</code> 真实值（面板 460×320、深色纯黑、强调色 #60cdff）。静态示意，选定后按真实 Skia 绘制实现。
+</p>
+
+<div class="row">
+
+  <!-- 折叠态 -->
+  <div class="item">
+    <p class="cap"><b>① 折叠态</b><span>快捷页 · 音量 + 设备各一行</span></p>
+    <div class="panel">
+      <div class="tabs">
+        <span class="tab">计划</span><span class="tab">性能</span><span class="tab">天气</span>
+        <span class="tab">日程</span><span class="tab">日历</span><span class="tab on">快捷</span>
+      </div>
+      <div class="hair"></div>
+      <div class="body">
+        <div class="grid">
+          <div class="cell"><span class="ball">◍</span>浏览器</div>
+          <div class="cell"><span class="ball">▤</span>命令行</div>
+          <div class="cell"><span class="ball">＋</span>添加程序</div>
+          <div class="cell"><span class="ball d">⏻</span>关机</div>
+          <div class="cell"><span class="ball d">↺</span>重启</div>
+          <div class="cell"><span class="ball d">☾</span>睡眠</div>
+        </div>
+        <div class="sect">
+          <div class="vol">
+            <span class="spk">🔊</span>
+            <span class="bar"><i style="width:68%"></i><b style="left:68%"></b></span>
+            <span class="pc">68%</span>
+            <span class="mute">静音</span>
+          </div>
+          <div class="dev"><span class="k">输出</span><span class="v">扬声器 (FxSound Audio Enhancer)</span><span class="go">切换 ›</span></div>
+          <div class="dev"><span class="k">输入</span><span class="v">麦克风 (Feaulle SHINE)</span><span class="go">切换 ›</span></div>
+        </div>
+      </div>
+      <div class="hint">滚轮 / 点击页签切换</div>
+    </div>
+    <p class="note">整块占约 96px（音量 34 + 设备两行 44 + 分隔）。动作格从 74px 压到 64px 就能放下。</p>
+  </div>
+
+  <!-- 展开态 -->
+  <div class="item">
+    <p class="cap"><b>② 点了「输出 切换 ›」</b><span>就地展开设备列表</span></p>
+    <div class="panel">
+      <div class="tabs">
+        <span class="tab">计划</span><span class="tab">性能</span><span class="tab">天气</span>
+        <span class="tab">日程</span><span class="tab">日历</span><span class="tab on">快捷</span>
+      </div>
+      <div class="hair"></div>
+      <div class="body">
+        <div class="sect" style="margin-top:8px;padding-top:0;border-top:0">
+          <div class="vol">
+            <span class="spk">🔊</span>
+            <span class="bar"><i style="width:68%"></i><b style="left:68%"></b></span>
+            <span class="pc">68%</span>
+            <span class="mute">静音</span>
+          </div>
+        </div>
+        <div class="list">
+          <div class="grouphdr">输出设备（8）<span class="sw">收起 ˄</span></div>
+          <div class="opt on"><span class="dot"></span>扬声器 (FxSound Audio Enhancer)<span class="tag">当前</span></div>
+          <div class="opt"><span class="dot"></span>耳机 (Feaulle SHINE)</div>
+          <div class="opt"><span class="dot"></span>H27T22 (NVIDIA High Definition Audio)</div>
+          <div class="opt"><span class="dot"></span>Realtek Digital Output (Realtek(R) Audio)</div>
+          <div class="opt"><span class="dot"></span>CABLE Input (VB-Audio Virtual Cable)</div>
+          <div class="opt"><span class="dot"></span>…还有 3 个（列表内滚动）</div>
+        </div>
+      </div>
+      <div class="hint">点设备即切 · 点别处收起</div>
+    </div>
+    <p class="note">展开后音量条留在原位（切换设备时看得见音量），列表在这块区域内滚动；「输入」同样一套，两份互不干扰。</p>
+  </div>
+
+</div>
+
+<div class="warn">
+  <b>实测前提</b>：设备切换用的是 Windows 未公开的 <code>IPolicyConfig::SetDefaultEndpoint</code>（SoundSwitch / EarTrumpet 等都靠它，
+  微软没有公开 API）。我在你机器上验证过：<b>录音侧真的切换成功</b>（说明实现是对的），
+  但<b>播放侧切了不生效</b> —— 与你正在运行的 FxSound 一致（已知它会阻止/抢回默认输出设备）。
+  所以这一块我会在界面上如实处理：切换失败时给出提示（而不是假装成功），必要时提示"先退出音频增强软件"。
+</div>
+
+</body>
+</html>
