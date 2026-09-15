@@ -561,13 +561,13 @@ public sealed class NativeIslandApp : IDisposable
 
     private void Loop()
     {
-        // 装钩子：点岛外空白 → 收起。失败（极少见）只意味着少一个便利，不影响其它功能。
+        // 装钩子：点岛外空白 → 收起。**回调跑在钩子线程上，只能读下面这几个缓存字段**：
+        // 不查 Win32、不读配置、不碰 COM —— 回调里多花的时间会直接变成全系统的鼠标延迟。
         _outsideClicks.OnClick = (x, y) =>
         {
-            if (!_cfg.CollapseOnBlank || _mode != "expanded") return false;
-            var (ix, iy, iw, ih) = Island();
-            if (x >= ix && x < ix + iw && y >= iy && y < iy + ih) return false;   // 岛内的点击由窗口自己处理
-            CollapseOnBlank();
+            if (!_outsideWatchOn) return false;
+            if (x >= _rectL && x < _rectR && y >= _rectT && y < _rectB) return false;  // 岛内交给窗口自己处理
+            _outsideClickPending = true;    // 真正的收起在帧循环里做
             return true;
         };
         _outsideClicks.Install();
@@ -637,6 +637,7 @@ public sealed class NativeIslandApp : IDisposable
                 _islandH = _fromH + (_toH - _fromH) * e;
             }
 
+            RefreshOutsideClickCache();   // 更新"点岛外收起"的缓存；消费钩子线程置的待办
             PollDeviceSwitch();   // 设备切换的回读校验：非阻塞，每帧只做 1~2 次 COM 读
             RenderFrame();
             Thread.Sleep(16);
@@ -4616,6 +4617,30 @@ public sealed class NativeIslandApp : IDisposable
 
     /// <summary>诊断用：当前形态（compact / expanded / alert）。**只读字段**，跨线程读也安全。</summary>
     internal string ModeForTest => _mode;
+
+    /// <summary>诊断用：临时摘掉全局鼠标钩子（用来量"有钩子/没钩子"对鼠标延迟的差别）。</summary>
+    internal void DisableOutsideClicksForTest() => _outsideClicks.Dispose();
+
+    // ---- 钩子线程只读这几个缓存字段（都是普通字段：读它不会去调 Win32/COM）----
+    private volatile bool _outsideWatchOn;      // 当前是否该判"点岛外收起"
+    private volatile bool _outsideClickPending; // 钩子线程置位，帧循环消费
+    private int _rectL, _rectT, _rectR, _rectB; // 岛体矩形的缓存（每帧更新）
+
+    /// <summary>每帧开头更新一次缓存：钩子回调只读它，避免在回调里做任何计算。</summary>
+    private void RefreshOutsideClickCache()
+    {
+        var (ix, iy, iw, ih) = Island();
+        _rectL = ix;
+        _rectT = iy;
+        _rectR = ix + iw;
+        _rectB = iy + ih;
+        _outsideWatchOn = _cfg.CollapseOnBlank && _mode == "expanded";
+        if (_outsideClickPending)
+        {
+            _outsideClickPending = false;
+            if (_outsideWatchOn) CollapseOnBlank();
+        }
+    }
 
     public void Dispose()
     {

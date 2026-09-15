@@ -262,6 +262,14 @@ public static partial class Native
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+    // ---- 钩子线程退出用（消息循环本身复用已有的 GetMessage/TranslateMessage/DispatchMessage）----
+
+    [DllImport("user32.dll")]
+    public static extern bool PostThreadMessage(uint idThread, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
     /// <summary>读窗口样式位（诊断用：确认窗口到底是不是分层窗）。</summary>
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);

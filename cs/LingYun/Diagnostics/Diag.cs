@@ -1937,6 +1937,35 @@ internal static class Diag
         Check("点岛外（原本就是收起态）：不产生异常、形态不变",
             island.ModeForTest == "compact", island.ModeForTest);
 
+        // 钩子会不会拖慢系统鼠标：SendInput 是**同步**的（要等输入处理完才返回），
+        // 所以连续投 N 个鼠标移动的耗时就能反映延迟。**必须做有钩子/无钩子对照**：
+        // 不做对照的话，会把别人的锅（比如鼠标下面那个窗口很忙）算到自己头上。
+        const int moves = 200;
+        var moveInputs = new Native.INPUT[moves];
+        for (int i = 0; i < moves; i++)
+            moveInputs[i] = new Native.INPUT
+            {
+                type = 0,
+                mi = new Native.MOUSEINPUT { dx = i % 2 == 0 ? 1 : -1, dwFlags = 0x0001 },   // MOUSEEVENTF_MOVE
+            };
+        double InjectMoves()
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Native.SendInput((uint)moves, moveInputs,
+                System.Runtime.InteropServices.Marshal.SizeOf<Native.INPUT>());
+            sw.Stop();
+            return sw.Elapsed.TotalMilliseconds / moves;
+        }
+
+        double perWith = InjectMoves();
+        island.DisableOutsideClicksForTest();   // 摘掉钩子，量对照组
+        Pump(0.4);
+        double perWithout = InjectMoves();
+        w.WriteLine($"鼠标移动注入 {moves} 次：有钩子 {perWith:0.000}ms/次　无钩子 {perWithout:0.000}ms/次"
+                    + $"　差 {perWith - perWithout:+0.000;-0.000;0.000}ms");
+        Check("点岛外：钩子给系统鼠标加的延迟很小（与无钩子相比 ≤2ms/次）",
+            perWith - perWithout <= 2.0, $"有钩子 {perWith:0.000}ms 无钩子 {perWithout:0.000}ms");
+
         w.WriteLine();
         return failed;
     }
