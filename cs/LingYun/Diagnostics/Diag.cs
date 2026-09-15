@@ -1673,7 +1673,8 @@ internal static class Diag
                     Color = new SKColor(255, 64, 64, 150), IsAntialias = true,
                     Style = SKPaintStyle.Stroke, StrokeWidth = 1,
                 };
-                c.DrawRect(panel, outline);
+                // 红框画在面板**外** 2px：既是窗口边界标记，又不会污染边缘剖面测量
+                c.DrawRect(new SKRect(panel.Left - 2, panel.Top - 2, panel.Right + 2, panel.Bottom + 2), outline);
                 using var text = new SKPaint { Color = SKColors.White, TextSize = 15, IsAntialias = true };
                 c.DrawText("真实观感：干净桌面 + 玻璃色调层 + 真机采样折射环带（红框=窗口边界）", 16, 26, text);
             }

@@ -202,11 +202,15 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
         return Math.Pow(t, 2.4);
     }
 
-    /// <summary>边缘 alpha：靠近边界更透（露出真实背景），向内侧衰减到材质色调。</summary>
+    /// <summary>
+    /// 边缘 alpha：靠近边界更透（露出真实背景），向内侧必须**衰减到 0**。
+    /// 早期版本写成 (26 + 190*t) 带 10% 底噪，环带就在 12% 透明度上被硬切断——
+    /// 实测在离边界 12px 处留下一道 1px 接缝（相邻像素亮度跳 19）。
+    /// </summary>
     internal static byte EdgeAlpha(double distance, double band, int opacityPercent)
     {
         double t = Math.Clamp(1 - distance / Math.Max(1, band), 0, 1);
-        double material = 26 + 190 * Math.Pow(t, 1.25);
+        double material = 216 * Math.Pow(t, 1.15);
         return (byte)Math.Clamp(Math.Round(material * Math.Clamp(opacityPercent, 0, 100) / 100.0), 0, 255);
     }
 
