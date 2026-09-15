@@ -2436,7 +2436,8 @@ public sealed class NativeIslandApp : IDisposable
             using var ear = new SKPaint { Color = Pal.Track, IsAntialias = true };
             var er = new SKRect(r.Right - 78 * s, r.Top + 8 * s, r.Right - 42 * s, r.Top + 44 * s);
             canvas.DrawCircle(er.MidX, er.MidY, 18 * s, ear);
-            DrawText(canvas, _focus == "media" ? "⏱" : "♪", er.MidX - 8 * s, er.MidY + 5 * s, 13 * s, Pal.Fg);
+            if (_focus == "media") DrawClockGlyph(canvas, er.MidX, er.MidY, 14 * s, Pal.Fg);
+            else DrawText(canvas, "♪", er.MidX - 8 * s, er.MidY + 5 * s, 13 * s, Pal.Fg);
         }
     }
 
@@ -3292,6 +3293,64 @@ public sealed class NativeIslandApp : IDisposable
     }
 
     /// <summary>上一首/下一首矢量字形（竖条 + 三角，比 emoji 字形锐利且跨字体稳定）。</summary>
+    /// <summary>
+    /// 喇叭字形（自绘矢量，与 ⏮ ⏸ ⏭ 同一套画法）。
+    /// 为什么不用 "🔊" 这个字符：它在 Windows 上是**彩色 emoji**（Segoe UI Emoji 渲染），
+    /// 传什么颜色都没用 —— 用户截图里那个灰紫喇叭 + 蓝色声波就是这么来的。
+    /// </summary>
+    /// <summary>小时钟字形（自绘矢量）。同样是因为 "⏱" 在 Windows 上是彩色 emoji，传颜色没用。</summary>
+    private static void DrawClockGlyph(SKCanvas c, float cx, float cy, float size, SKColor color)
+    {
+        float u = size / 2;
+        using var p = new SKPaint
+        {
+            Color = color, IsAntialias = true, Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1.5f * (size / 14f), StrokeCap = SKStrokeCap.Round,
+        };
+        c.DrawCircle(cx, cy, u * 0.86f, p);
+        c.DrawLine(cx, cy, cx, cy - u * 0.52f, p);          // 分针
+        c.DrawLine(cx, cy, cx + u * 0.42f, cy + u * 0.22f, p);  // 时针
+    }
+
+    private static void DrawSpeakerGlyph(SKCanvas c, float cx, float cy, float size, bool muted, SKColor color)
+    {
+        float u = size / 2;
+        using var p = new SKPaint { Color = color, IsAntialias = true };
+        // 箱体
+        c.DrawRoundRect(new SKRoundRect(
+            new SKRect(cx - u, cy - u * 0.34f, cx - u * 0.22f, cy + u * 0.34f), 1.2f * (size / 14f), 1.2f * (size / 14f)), p);
+        // 喇叭口
+        using var cone = new SKPath();
+        cone.MoveTo(cx - u * 0.22f, cy - u * 0.34f);
+        cone.LineTo(cx + u * 0.26f, cy - u * 0.94f);
+        cone.LineTo(cx + u * 0.26f, cy + u * 0.94f);
+        cone.LineTo(cx - u * 0.22f, cy + u * 0.34f);
+        cone.Close();
+        c.DrawPath(cone, p);
+
+        using var wave = new SKPaint
+        {
+            Color = color, IsAntialias = true, Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1.4f * (size / 14f), StrokeCap = SKStrokeCap.Round,
+        };
+        if (muted)
+        {
+            // 静音：一道斜杠划过去（比叉号更接近系统音量图标的观感）
+            c.DrawLine(cx + u * 0.45f, cy - u * 0.6f, cx + u * 1.05f, cy + u * 0.6f, wave);
+            c.DrawLine(cx + u * 1.05f, cy - u * 0.6f, cx + u * 0.45f, cy + u * 0.6f, wave);
+        }
+        else
+        {
+            // 声波：两道弧（与播放键同一线宽观感）
+            for (int i = 1; i <= 2; i++)
+            {
+                float r = u * (0.42f + i * 0.34f);
+                var box = new SKRect(cx - r, cy - r, cx + r, cy + r);
+                c.DrawArc(box, -52, 104, false, wave);
+            }
+        }
+    }
+
     private static void DrawSkipGlyph(SKCanvas c, float cx, float cy, float size, bool next, SKColor color)
     {
         using var p = new SKPaint { Color = color, IsAntialias = true };
@@ -3385,17 +3444,14 @@ public sealed class NativeIslandApp : IDisposable
         }
 
         var glyph = ch.VolGlyph;
-        // 音量图标与播放/暂停/切歌用同一个前景色（Pal.Fg，深色主题下就是纯白）：
-        // 以前收起弹出条时用 Pal.Sub（灰的），跟旁边的传输键不一致，看着像两个层级的控件。
-        DrawText(canvas, muted ? "🔇" : "🔊", glyph.Left, glyph.MidY + 5 * s, 13 * s, Pal.Fg);
+        // 自绘矢量喇叭 + 与播放/暂停/切歌同一个前景色（Pal.Fg，深色主题下就是纯白）
+        DrawSpeakerGlyph(canvas, glyph.MidX, glyph.MidY, 15 * s, muted, Pal.Fg);
         if (!_volPopup) return;   // 弹出条只在点开时画
 
         var popup = ch.VolTrack;
         DrawMaterialSurface(canvas, popup, 10 * s, Pal.Card);
         var muteRect = VolumeMuteRect(popup, s);
-        DrawText(canvas, muted ? "🔇" : "🔊",
-            popup.MidX - MeasureText(muted ? "🔇" : "🔊", 12 * s) / 2, muteRect.MidY + 4 * s,
-            12 * s, muted ? Pal.Danger : Pal.Sub);
+        DrawSpeakerGlyph(canvas, popup.MidX, muteRect.MidY, 14 * s, muted, muted ? Pal.Danger : Pal.Sub);
 
         var groove = VolumeGroove(popup, s);
         using (var tp = new SKPaint { Color = Pal.Track, IsAntialias = true })
