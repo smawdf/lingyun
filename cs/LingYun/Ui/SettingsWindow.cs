@@ -32,6 +32,10 @@ public sealed class SettingsWindow : Window
     private readonly Slider _offsetX = NewSlider(-280, 280);
     private readonly Slider _offsetY = NewSlider(0, 200);
     private readonly Slider _opacity = NewSlider(40, 100);
+    private readonly Slider _winOpacity = NewSlider(40, 100);
+    private readonly TextBlock _winOpacityLabel = new();
+    private readonly RadioButton _winOpacityFollow = new();
+    private readonly RadioButton _winOpacityCustom = new();
     private readonly Slider _lyricDelay = NewSlider(-2000, 2000);
     private readonly Slider _autoCollapse = NewSlider(0, 10000);
     private readonly TextBlock _autoCollapseLabel = new();
@@ -480,8 +484,52 @@ public sealed class SettingsWindow : Window
             ApplyMaterial();   // 设置窗口的玻璃色调也跟着透明度走
         });
         AddOpacityPresets(card);
-        AddHint(root, "只压背景与材质，文字和强调色不变；三档材质与液态玻璃都跟随。");
+        // 设置窗口的透明度可以单独取值：两者最优值不同——岛小、字直接压在玻璃上，太透会看不清；
+        // 窗口大、有卡片和留白托着，可以更透；而且岛的透明度还参与自适应换色判据
+        // （越透越容易翻深色材质），窗口那边纯粹是观感，不该改一个连带另一个。
+        AddRadioRow(card, "设置窗口", new[] { ("跟随岛", _winOpacityFollow), ("单独调", _winOpacityCustom) },
+            "winopacity");
+        AddSlider(card, "窗口不透明度", _winOpacity, _winOpacityLabel, v =>
+        {
+            _cfg.WindowOpacity = (int)v;
+            _winOpacityLabel.Text = $"  {v:0}%";
+            ApplyMaterial();
+        });
+        _winOpacityFollow.Checked += (_, _) => { if (_ready) SetWindowOpacityFollow(true); };
+        _winOpacityCustom.Checked += (_, _) => { if (_ready) SetWindowOpacityFollow(false); };
+        AddHint(root, "只压背景与材质，文字和强调色不变；岛的四种主题都跟随。"
+                      + "设置窗口默认跟随岛，也可以单独调（改了不会影响岛）。");
         return root;
+    }
+
+    /// <summary>诊断用：改设置窗口自己的透明度并立刻重算材质（不写盘）。</summary>
+    internal void SetWindowOpacityForTest(int percent)
+    {
+        _cfg.WindowOpacity = percent;
+        SyncWindowOpacity();
+        ApplyMaterial();
+    }
+
+    /// <summary>设置窗口实际生效的不透明度（可跟随岛）。</summary>
+    private int WindowOpacity => AppConfig.WindowOpacityFor(_cfg.WindowOpacity, _cfg.Opacity);
+
+    /// <summary>诊断用：当前实际生效的窗口不透明度。</summary>
+    internal int WindowOpacityForTest => WindowOpacity;
+
+    /// <summary>「跟随岛 / 单独调」：切换后立刻重算窗口材质，并把滑杆的可用状态同步过来。</summary>
+    private void SetWindowOpacityFollow(bool follow)
+    {
+        _cfg.WindowOpacity = follow ? AppConfig.FollowWindowOpacity : (int)_winOpacity.Value;
+        SyncWindowOpacity();
+        ApplyMaterial();
+    }
+
+    /// <summary>跟随岛时滑杆置灰、值显示为"跟随岛"（避免以为拖它有用）。</summary>
+    private void SyncWindowOpacity()
+    {
+        bool follow = _cfg.WindowOpacity == AppConfig.FollowWindowOpacity;
+        _winOpacity.IsEnabled = !follow;
+        _winOpacityLabel.Text = follow ? "  跟随岛" : $"  {_winOpacity.Value:0}%";
     }
 
     private FrameworkElement BuildLayoutPane()
@@ -736,7 +784,8 @@ public sealed class SettingsWindow : Window
         }
         else
         {
-            double op = Math.Clamp(_cfg.Opacity, 40, 100) / 100.0;
+            // 设置窗口自己的透明度（默认跟随岛，可单独调）
+            double op = WindowOpacity / 100.0;
             var tintColor = FromArgb(tintArgb);
             _tintOverlay.Background = new SolidColorBrush(Color.FromArgb(
                 (byte)Math.Round(tintColor.A * op), tintColor.R, tintColor.G, tintColor.B));
@@ -750,7 +799,7 @@ public sealed class SettingsWindow : Window
 
         if (_ready || IsInitialized)
         {
-            WindowMaterial.ApplyWindowChrome(this, _dark, material, _cfg.Opacity);
+            WindowMaterial.ApplyWindowChrome(this, _dark, material, WindowOpacity);
             // 亚克力需要裁窗口区域（系统模糊铺满整矩形）；玻璃的圆角由我们自己画。
             // 注意：**不需要区域时也必须调用一次（半径 0）把旧区域清掉**——
             // 否则从亚克力切到玻璃后，系统里那个 10px 锯齿区域还留着，
@@ -981,6 +1030,11 @@ public sealed class SettingsWindow : Window
 
         _opacity.Value = _cfg.Opacity;
         _opacityLabel.Text = $"  {_cfg.Opacity}%";
+        bool winFollow = _cfg.WindowOpacity == AppConfig.FollowWindowOpacity;
+        _winOpacityFollow.IsChecked = winFollow;
+        _winOpacityCustom.IsChecked = !winFollow;
+        _winOpacity.Value = winFollow ? _cfg.Opacity : _cfg.WindowOpacity;
+        SyncWindowOpacity();
         _lyricDelay.Value = _cfg.LyricDelayMs;
         _lyricDelayLabel.Text = _cfg.LyricDelayMs == 0 ? "  不补偿"
             : _cfg.LyricDelayMs > 0 ? $"  提前 {_cfg.LyricDelayMs / 1000.0:0.0}s"
@@ -1081,6 +1135,10 @@ public sealed class SettingsWindow : Window
         _offsetY.Value = 8;
         _autoCollapse.Value = 900;
         _opacity.Value = 100;
+        _winOpacityFollow.IsChecked = true;
+        _cfg.WindowOpacity = AppConfig.FollowWindowOpacity;
+        _winOpacity.Value = 100;
+        SyncWindowOpacity();
         _lyricDelay.Value = 0;
         _composite.IsChecked = false;
         _compositeClock.IsChecked = true;

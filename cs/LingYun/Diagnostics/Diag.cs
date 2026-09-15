@@ -1501,62 +1501,93 @@ internal static class Diag
         const int sx = 6, sy = 455, sw = 174, sh = 65;
         using var sampler = new Services.BackdropSampler();
 
-        // 粗扫工作区，找最亮/最暗的两块背景
+        // 粗扫工作区，找最亮/最暗的两块背景。
+        // 扫描整块工作区，但只有"窗口能真的摆到这个位置"的块才算候选：
+        // 系统会把越界的窗口钳回屏幕，那样"窗口内"和"桌面"采的就不是同一块地方，
+        // 量出来的结构保留比甚至 >1（物理上不可能）—— 以前就是这么被污染的。
         var wa = Displays.WorkAreaOf(cfg.MonitorIndex);
         const int block = 120;
-        Services.BackdropSample? bright = null, dark = null;
-        int bx = 0, by = 0, dx = 0, dy = 0;
+        var cands = new List<(int X, int Y, double Lum)>();
         win.Hide();                       // 扫描时必须藏起来，否则采到的是窗口自己
         Pump(0.35);
-        for (int y = wa.Top + 8; y + block < wa.Bottom; y += 160)
-        {
-            for (int x = wa.Left + 8; x + block < wa.Right; x += 160)
-            {
-                if (sampler.Sample(x, y, block, block) is not { Known: true } v) continue;
-                if (bright is null || v.Luminance > bright.Value.Luminance) { bright = v; bx = x; by = y; }
-                if (dark is null || v.Luminance < dark.Value.Luminance) { dark = v; dx = x; dy = y; }
-            }
-        }
+        for (int y = wa.Top + 8; y + block < wa.Bottom; y += 120)
+            for (int x = wa.Left + 8; x + block < wa.Right; x += 120)
+                if (sampler.Sample(x, y, block, block) is { Known: true } v)
+                    cands.Add((x, y, v.Luminance));
         win.Show();
         Pump(0.4);
 
-        if (bright is null || dark is null)
+        if (cands.Count == 0)
         {
             Check("亚克力：能采到桌面背景做对照", false, "采样失败（无桌面会话/受保护内容）");
             win.Close();
             w.WriteLine();
             return failed;
         }
+        cands.Sort((a, b) => b.Lum.CompareTo(a.Lum));
 
-        double lumSpread = bright.Value.Luminance - dark.Value.Luminance;
-        w.WriteLine($"对照背景：亮块 ({bx},{by}) 亮度 {bright.Value.Luminance:0.000}　"
-                    + $"暗块 ({dx},{dy}) 亮度 {dark.Value.Luminance:0.000}　差 {lumSpread:0.000}");
-        if (lumSpread < 0.05)
+        // 把窗口摆到 (tx,ty) 上，量"桌面 D"和"窗口内 W"；位置被系统钳走就直接算这次无效
+        bool TryMeasure(int tx, int ty, out double dv, out double wv, out double dStruct, out double wStruct,
+            out Services.BackdropSample panel)
         {
-            w.WriteLine("（桌面明暗差太小，无法判定——换张对比明显的壁纸再跑）");
+            dv = wv = dStruct = wStruct = 0;
+            panel = Services.BackdropSample.Unknown;
+            double wantL = tx + block / 2.0 - (sx + sw / 2.0);
+            double wantT = ty + block / 2.0 - (sy + sh / 2.0);
+            win.Left = wantL;
+            win.Top = wantT;
+            Pump(0.3);
+            if (Math.Abs(win.Left - wantL) > 2 || Math.Abs(win.Top - wantT) > 2) return false;
+            win.Hide();
+            Pump(0.25);
+            var ds = sampler.Sample(tx, ty, block, block);
+            win.Show();
+            Pump(0.3);
+            var ws = sampler.Sample((int)(win.Left + sx), (int)(win.Top + sy), sw, sh);
+            if (ds is not { Known: true } dsv || ws is not { Known: true } wsv) return false;
+            dv = dsv.Luminance;
+            wv = wsv.Luminance;
+            dStruct = dsv.BrightestCell - dsv.Luminance;
+            wStruct = wsv.BrightestCell - wsv.Luminance;
+            panel = wsv;
+            return true;
+        }
+
+        // 从最亮/最暗两端各试几个候选，取第一对"能测且明暗差够大"的
+        double dBright = 0, wBright = 0, wStructB = 0, dStructB = 0, dDark = 0, wDark = 0;
+        double wStructD = 0, dStructD = 0;
+        var panelBright = Services.BackdropSample.Unknown;
+        int bx = 0, by = 0, dx = 0, dy = 0;
+        bool got = false;
+        int tries = Math.Min(6, cands.Count);
+        for (int hi = 0; hi < tries && !got; hi++)
+        {
+            for (int lo = 0; lo < tries && !got; lo++)
+            {
+                var a = cands[hi];
+                var b = cands[cands.Count - 1 - lo];
+                if (a.Lum - b.Lum < 0.05) continue;
+                if (!TryMeasure(a.X, a.Y, out var d1, out var w1, out var ds1, out var ws1, out var p1)) continue;
+                if (!TryMeasure(b.X, b.Y, out var d2, out var w2, out var ds2, out var ws2, out _)) continue;
+                (bx, by) = (a.X, a.Y);
+                (dx, dy) = (b.X, b.Y);
+                (dBright, wBright, dStructB, wStructB, panelBright) = (d1, w1, ds1, ws1, p1);
+                (dDark, wDark, dStructD, wStructD) = (d2, w2, ds2, ws2);
+                got = true;
+                w.WriteLine($"对照背景：亮块 ({a.X},{a.Y}) {a.Lum:0.000}　暗块 ({b.X},{b.Y}) {b.Lum:0.000}"
+                            + $"　差 {a.Lum - b.Lum:0.000}");
+            }
+        }
+
+        if (!got)
+        {
+            w.WriteLine("!! 没找到「窗口摆得上、且明暗差够大」的两块背景 —— 这一轮**没有做任何判定**");
+            w.WriteLine("   （桌面太平或窗口位置被系统钳位；换张对比明显的壁纸再跑）");
             win.Close();
             w.WriteLine();
             return failed;
         }
 
-        (double D, double W, double WStruct, double DStruct, Services.BackdropSample Panel) Measure(int tx, int ty)
-        {
-            win.Left = tx + block / 2.0 - (sx + sw / 2.0);
-            win.Top = ty + block / 2.0 - (sy + sh / 2.0);
-            Pump(0.3);
-            win.Hide();
-            Pump(0.25);
-            var d = sampler.Sample(tx, ty, block, block) ?? Services.BackdropSample.Unknown;
-            win.Show();
-            Pump(0.3);
-            var wv = sampler.Sample(
-                (int)(win.Left + sx), (int)(win.Top + sy), sw, sh) ?? Services.BackdropSample.Unknown;
-            return (d.Luminance, wv.Luminance,
-                wv.BrightestCell - wv.Luminance, d.BrightestCell - d.Luminance, wv);
-        }
-
-        var (dBright, wBright, wStructB, dStructB, panelBright) = Measure(bx, by);
-        var (dDark, wDark, wStructD, dStructD, _) = Measure(dx, dy);
         w.WriteLine($"压在**亮**背景上：桌面亮度 {dBright:0.000} → 窗口内 {wBright:0.000}"
                     + $"（结构 {dStructB:0.000} → {wStructB:0.000}）");
         w.WriteLine($"压在**暗**背景上：桌面亮度 {dDark:0.000} → 窗口内 {wDark:0.000}"
@@ -1592,12 +1623,36 @@ internal static class Diag
         Check("亚克力：响应方向与桌面一致（亮背景 → 窗口也更亮）",
             response < 0.004 || Math.Sign(winDelta) == Math.Sign(deskDelta),
             $"win={winDelta:0.000} desk={deskDelta:0.000}");
-        Check("亚克力：背景结构被抹平（确实有模糊，不是直接透出原始桌面）",
-            double.IsNaN(blurRatio) || blurRatio < 0.8, $"ratio={blurRatio:0.00}");
+        // 「结构保留比」只报告不断言：桌面块是 120×120、窗口条是 174×65，形状不同本就不能直接比，
+        // 而且 DWM 亚克力自带噪点纹理也会贡献结构。拿它当判据会得出假失败。
+        w.WriteLine($"（结构保留比 {blurRatio:0.00} 仅供参考；材质有模糊由「跟随比例远小于 1」间接体现）");
         Check("亚克力：最亮壁纸下主文字仍够清楚（对比度 ≥ 4.5）",
             cFg >= 4.5, $"{cFg:0.0}:1");
         Check("亚克力：最亮壁纸下提示文字不至于看不清（对比度 ≥ 3.0）",
             cDim >= 3.0, $"{cDim:0.0}:1");
+
+        // 同一位置 A/B：只改设置窗口自己的透明度（背景完全不动），窗口内颜色必须跟着变。
+        // 这一条验的是"设置 → 解析 → 材质 → DWM → 像素"整条链真的接通了（只测纯函数会漏掉调用处）。
+        // 必须挑**亮**背景来做：暗底色下深浅两个色调算出来本来就接近，色差贴边说明不了问题。
+        win.Left = bx + block / 2.0 - (sx + sw / 2.0);
+        win.Top = by + block / 2.0 - (sy + sh / 2.0);
+        Pump(0.35);
+        win.SetWindowOpacityForTest(100);
+        Pump(0.45);
+        var atFull = sampler.Sample(
+            (int)(win.Left + sx), (int)(win.Top + sy), sw, sh) ?? Services.BackdropSample.Unknown;
+        win.SetWindowOpacityForTest(40);
+        Pump(0.45);
+        var atThin = sampler.Sample(
+            (int)(win.Left + sx), (int)(win.Top + sy), sw, sh) ?? Services.BackdropSample.Unknown;
+        win.SetWindowOpacityForTest(AppConfig.FollowWindowOpacity);
+        Pump(0.3);
+        int colorDelta = Math.Abs(atFull.R - atThin.R) + Math.Abs(atFull.G - atThin.G)
+                         + Math.Abs(atFull.B - atThin.B);
+        w.WriteLine($"同一位置只改窗口透明度：100% → RGB({atFull.R},{atFull.G},{atFull.B})　"
+                    + $"40% → RGB({atThin.R},{atThin.G},{atThin.B})　色差 {colorDelta}");
+        Check("亚克力：窗口透明度真的传到材质上（同位置改透明度，窗口内颜色必须变）",
+            colorDelta >= 3, $"色差={colorDelta}（0 说明设置没接到材质上）");
         win.Close();
         w.WriteLine();
         return failed;
@@ -2457,8 +2512,16 @@ internal static class Diag
             Check("不透明度：只压背景，文字/强调色保持不透明",
                 half.Fg.Alpha == 255 && half.Accent.Alpha == 255 && half.Dim.Alpha == 255);
             Check("不透明度：Normalize 钳到 40–100",
-                ConfigStore.Normalize(new AppConfig { Opacity = 5 }).Opacity == 100
+                ConfigStore.Normalize(new AppConfig { Opacity = 10 }).Opacity == 100
                 && ConfigStore.Normalize(new AppConfig { Opacity = 70 }).Opacity == 70);
+            Check("设置窗口透明度：跟随岛 / 单独调 / 越界回落跟随",
+                AppConfig.WindowOpacityFor(AppConfig.FollowWindowOpacity, 70) == 70
+                && AppConfig.WindowOpacityFor(45, 70) == 45
+                && AppConfig.WindowOpacityFor(45, 999) == 45
+                && AppConfig.WindowOpacityFor(AppConfig.FollowWindowOpacity, 5) == 40
+                && ConfigStore.Normalize(new AppConfig { WindowOpacity = 12 }).WindowOpacity
+                    == AppConfig.FollowWindowOpacity
+                && ConfigStore.Normalize(new AppConfig { WindowOpacity = 60 }).WindowOpacity == 60);
 
             // 液态玻璃（新主题）：恒浅色的应用内材质，透明度滑杆同样作用于它
             var glass = Ui.IslandPalette.For("liquid-glass", 100);

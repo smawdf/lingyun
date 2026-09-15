@@ -75,6 +75,24 @@ public sealed class AppConfig
     /// <summary>背景不透明度（40–100%，只作用于背景类颜色，文字不变）。</summary>
     public int Opacity { get; set; } = 100;
     /// <summary>
+    /// 设置窗口自己的背景不透明度（40–100）；<see cref="FollowWindowOpacity"/> = 跟随岛的
+    /// <see cref="Opacity"/>。为什么要分开：两者最优值不同——岛小、字直接压在玻璃上，太透会看不清；
+    /// 窗口大、有卡片和留白托着，可以更透；而且岛的透明度还参与自适应换色判据
+    /// （越透越容易翻深色材质），窗口那边纯粹是观感。改一个不该连带影响另一个。
+    /// </summary>
+    public int WindowOpacity { get; set; } = FollowWindowOpacity;
+    /// <summary>设置窗口透明度跟随岛（WindowOpacity 取这个值时表示"跟随"）。</summary>
+    public const int FollowWindowOpacity = -1;
+
+    /// <summary>
+    /// 设置窗口实际生效的不透明度：跟随岛则用岛的值，否则用自己的（都钳在 40–100）。
+    /// 纯函数，自测用；设置窗口取色与 DWM 色调都走这里。
+    /// </summary>
+    public static int WindowOpacityFor(int windowOpacity, int islandOpacity)
+        => Math.Clamp(
+            windowOpacity == FollowWindowOpacity ? islandOpacity : windowOpacity,
+            40, 100);
+    /// <summary>
     /// 「外观」= 材质 + 深浅，两者联动（不再有独立的设置窗口材质）：
     /// <see cref="Theme"/> 是最终生效值（dark/light/system/liquid-glass），
     /// <see cref="BaseTheme"/> 记住"亚克力"档下的深浅，从液态玻璃切回来时用。
@@ -188,6 +206,9 @@ public static class ConfigStore
             cfg.CompositeClock = true;
         if (cfg.LyricDelayMs is < -3000 or > 3000) cfg.LyricDelayMs = 0;
         if (cfg.Opacity is < 40 or > 100) cfg.Opacity = 100;
+        // 设置窗口透明度：跟随（-1）或 40–100，其余一律回落到"跟随"
+        if (cfg.WindowOpacity != AppConfig.FollowWindowOpacity && cfg.WindowOpacity is < 40 or > 100)
+            cfg.WindowOpacity = AppConfig.FollowWindowOpacity;
         if (cfg.MediaStyle is not ("a" or "b" or "c")) cfg.MediaStyle = "a";
         if (cfg.AutoCollapseMs is < 0 or > 10000) cfg.AutoCollapseMs = 900;
         if (cfg.TopmostMode is not ("always" or "normal" or "auto")) cfg.TopmostMode = "always";
