@@ -342,6 +342,28 @@ public sealed class NativeIslandApp : IDisposable
     /// </summary>
     public void Post(Action mutation) => _pending.Enqueue(mutation);
 
+    /// <summary>音量快照（跨线程传值用；Available=false 表示设备不可用）。</summary>
+    internal readonly record struct VolumeSnapshot(bool Available, float Volume, bool Muted);
+
+    /// <summary>
+    /// 设置窗口读音量：**必须回到岛线程上取**。AudioEndpointVolume 不是敏捷 COM 对象
+    /// （服务自己的注释就是这么写的），从 WPF 线程直接碰会抛 RPC_E_WRONG_THREAD；
+    /// 而服务内部是 try/catch 的，异常会被吞成"设备不可用"——界面上表现为整块灰掉、像没声卡，
+    /// 属于静默错，比崩溃难查得多。回调跑在岛线程上，调用方要自己切回 UI 线程再动控件。
+    /// </summary>
+    internal void ReadVolumeForSettings(Action<VolumeSnapshot> report) => Post(() =>
+    {
+        var svc = _volumeSvc;
+        if (svc is null) { report(new VolumeSnapshot(false, 0f, false)); return; }
+        report(new VolumeSnapshot(svc.Available, svc.GetVolume() ?? 0f, svc.IsMuted() ?? false));
+    });
+
+    /// <summary>设置窗口改主音量（在岛线程上执行）。</summary>
+    internal void SetVolumeForSettings(float level) => Post(() => _volumeSvc?.SetVolume(level));
+
+    /// <summary>设置窗口切静音（在岛线程上执行）。</summary>
+    internal void ToggleMuteForSettings() => Post(() => _volumeSvc?.ToggleMute());
+
     /// <summary>
     /// 应用一次事项改动并写盘（排进岛线程执行）。original=null 且 replacement 非空 → 追加；
     /// replacement=null → 删除 original（按引用找，编辑器打开期间列表变动也不会错位）；
