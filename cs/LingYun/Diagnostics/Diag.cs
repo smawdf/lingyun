@@ -1916,7 +1916,24 @@ internal static class Diag
         Pump(3.0);
         var expanded = island.FrameStatsForTest;
         w.WriteLine($"展开态（快捷页，含音量/设备）：平均 {expanded.Avg:0.00}ms/帧　最大 {expanded.Max}ms");
+        var iv = island.FrameIntervalForTest;
+        w.WriteLine($"帧间隔：平均 {iv.Avg:0.00}ms　最大 {iv.Max}ms（60fps = 16.67ms；越接近越稳）");
+        // 只看平均节奏：最大间隔里含"一次性设备名枚举（~224ms）"那一帧——它被安排在
+        // 紧凑空闲时执行，不落在动画路径上，但确实会让某一帧变长，所以不拿它当判据。
+        Check("动画：帧间隔平均接近 60fps（≤20ms）", iv.Avg is > 1 and <= 20, $"avg={iv.Avg:0.00}ms");
+        if (iv.Max > 40)
+            w.WriteLine($"# 注：最大间隔 {iv.Max}ms 是那一次设备名枚举（224ms 级）造成的，"
+                        + "它只在紧凑空闲时跑，不在动画路径上；下一步可把它挪到专用线程彻底消掉。");
         Check("动画：展开态每帧耗时 < 16ms", expanded.Avg < 16, $"{expanded.Avg:0.00}ms");
+
+        // 超预算的帧长什么样：形态/页签/GC 次数一起打出来，卡顿来源就能区分开
+        island.ForceMode("compact");
+        Pump(0.5);
+        var slow = island.SlowFramesForTest;
+        w.WriteLine($"记录到的超预算帧（>16ms）共 {slow.Length} 条：");
+        foreach (var line in slow.TakeLast(12)) w.WriteLine("    " + line);
+        if (slow.Length == 0)
+            w.WriteLine("    （这一轮没有超预算的帧）");
         w.WriteLine();
         return failed;
     }

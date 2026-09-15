@@ -270,6 +270,27 @@ public static partial class Native
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
 
+    // ---- 高精度帧节奏：Thread.Sleep 受系统计时器粒度限制（默认 ~15.6ms），
+    //      想稳定 60fps 就会在 16~31ms 之间乱跳；可等待计时器（Win10 1803+ 的
+    //      CREATE_WAITABLE_TIMER_HIGH_RESOLUTION）能精确到毫秒以下，且不改全系统设置。----
+
+    public const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x00000002;
+    public const uint TIMER_ALL_ACCESS = 0x1F0003;
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr CreateWaitableTimerEx(IntPtr lpTimerAttributes, string? lpTimerName,
+        uint dwFlags, uint dwDesiredAccess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetWaitableTimer(IntPtr hTimer, ref long lpDueTime, int lPeriod,
+        IntPtr pfnCompletionRoutine, IntPtr lpArgToCompletionRoutine, bool fResume);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
     /// <summary>读窗口样式位（诊断用：确认窗口到底是不是分层窗）。</summary>
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);

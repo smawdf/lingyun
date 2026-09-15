@@ -661,12 +661,45 @@ public sealed class NativeIslandApp : IDisposable
                                / System.Diagnostics.Stopwatch.Frequency;
             _frameSum += elapsedMs;
             _frameMax = Math.Max(_frameMax, (long)elapsedMs);
+            if (elapsedMs > FrameMs)
+            {
+                // 记下超预算的帧：耗时 + 当时在干什么 + 这一帧触发了几次 GC
+                int gc = GC.CollectionCount(0);
+                if (gc != _lastGc)
+                {
+                    _lastGc = gc;
+                    _slowFrames.Add($"#{_frameSeq} {elapsedMs:0.0}ms mode={_mode} page={_page} GC#{gc}");
+                }
+                else
+                {
+                    _slowFrames.Add($"#{_frameSeq} {elapsedMs:0.0}ms mode={_mode} page={_page}");
+                }
+                if (_slowFrames.Count > 24) _slowFrames.RemoveAt(0);
+            }
+            _frameSeq++;
             if (++_frameCount >= 120) { _frameAvg = _frameSum / _frameCount; _frameSum = 0; _frameCount = 0; }
 
-            // 帧节奏按"本帧已用了多少"来补睡，而不是固定 Sleep(16)：
-            // 固定睡 16 会让实际间隔变成 16+绘制时间（抖动大，看着就是"不够顺"）。
+            // 帧节奏：按"本帧已用了多少"补足到 16ms，并且**用高精度可等待计时器**睡。
+            // 直接 Thread.Sleep 的粒度约 15.6ms，睡 15 会变成 15~31ms，动画看着就是一跳一跳的。
             double waitMs = FrameMs - elapsedMs;
-            if (waitMs > 1) Thread.Sleep((int)waitMs);
+            if (waitMs > 0.5) WaitPrecise(waitMs);
+
+            // 帧间隔统计：动画顺不顺真正看的是"间隔稳不稳"，不是绘制快不快
+            long nowStamp = System.Diagnostics.Stopwatch.GetTimestamp();
+            double intervalMs = (nowStamp - _lastFrameStamp) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            _lastFrameStamp = nowStamp;
+            if (_intervalCount > 0)          // 第一帧不算（上一帧时间戳还是 0）
+            {
+                _intervalSum += intervalMs;
+                _intervalMax = Math.Max(_intervalMax, (long)intervalMs);
+                if (++_intervalCount >= 120)
+                {
+                    _intervalAvg = _intervalSum / _intervalCount;
+                    _intervalSum = 0;
+                    _intervalCount = 1;
+                }
+            }
+            else _intervalCount = 1;
         }
     }
 
@@ -4662,12 +4695,51 @@ public sealed class NativeIslandApp : IDisposable
     private const int FrameMs = 16;
 
     private double _frameSum;
+    private long _frameSeq;
+    private long _lastFrameStamp;
+    private double _intervalSum;
+    private double _intervalAvg;
+    private long _intervalMax;
+    private int _intervalCount;
+    private IntPtr _waitTimer;
+    private int _lastGc;
     private long _frameMax;
     private double _frameAvg;
     private int _frameCount;
 
     /// <summary>诊断用：最近 120 帧的平均/最大绘制耗时（毫秒）。</summary>
     internal (double Avg, double Max) FrameStatsForTest => (_frameAvg, _frameMax);
+
+    /// <summary>诊断用：最近 120 帧的平均/最大**间隔**（毫秒）。动画顺不顺看这个更准。</summary>
+    internal (double Avg, double Max) FrameIntervalForTest => (_intervalAvg, _intervalMax);
+
+    /// <summary>
+    /// 睡到指定毫秒（尽量准）。优先用高精度可等待计时器：Thread.Sleep 受系统计时器粒度限制
+    /// （默认 ~15.6ms），想让 60fps 稳定就会在 16~31ms 之间乱跳，动画看着一跳一跳。
+    /// 拿不到高精度计时器时退回 Thread.Sleep（老系统），功能不变、只是没那么稳。
+    /// </summary>
+    private void WaitPrecise(double ms)
+    {
+        if (_waitTimer == IntPtr.Zero)
+            _waitTimer = Native.CreateWaitableTimerEx(IntPtr.Zero, null,
+                Native.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, Native.TIMER_ALL_ACCESS);
+        if (_waitTimer == IntPtr.Zero) { Thread.Sleep((int)Math.Max(1, ms)); return; }
+        long due = -(long)(ms * 10000);      // 相对时间，单位 100ns
+        if (!Native.SetWaitableTimer(_waitTimer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false))
+        {
+            Thread.Sleep((int)Math.Max(1, ms));
+            return;
+        }
+        Native.WaitForSingleObject(_waitTimer, 100);
+    }
+
+    /// <summary>
+    /// 诊断用：最近几帧"超过一帧预算（16ms）"的记录：耗时 + 当时形态/页签 + GC 次数增量。
+    /// 动画卡顿的来源（换页重排 / 阴影模糊 / GC）就靠它区分，别靠猜。
+    /// </summary>
+    private readonly List<string> _slowFrames = new();
+
+    internal string[] SlowFramesForTest => _slowFrames.ToArray();
 
     /// <summary>诊断用：当前形态（compact / expanded / alert）。**只读字段**，跨线程读也安全。</summary>
     internal string ModeForTest => _mode;
@@ -4701,6 +4773,7 @@ public sealed class NativeIslandApp : IDisposable
 
     public void Dispose()
     {
+        if (_waitTimer != IntPtr.Zero) { try { Native.CloseHandle(_waitTimer); } catch { } _waitTimer = IntPtr.Zero; }
         _outsideClicks.Dispose();
         // 只投递 WM_CLOSE：DIB 与窗口都由岛线程自行释放，避免跨线程释放/绘制竞争
         _host.Dispose();
