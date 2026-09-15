@@ -65,7 +65,7 @@ public sealed class NativeIslandApp : IDisposable
     private const int AutoHideHotZonePx = 4;     // 自动隐藏：光标进入工作区顶部多少像素内恢复
 
     /// <summary>展开面板的页签名。页签与页面绘制、命中测试共用这一份顺序。</summary>
-    internal static readonly string[] PageNames = { "计划", "性能", "天气", "日程", "日历", "快捷", "音量" };
+    internal static readonly string[] PageNames = { "计划", "性能", "天气", "日程", "日历", "快捷" };
 
     /// <summary>「快捷」页的下标——功能按钮只出现在这里，紧凑态一个按钮都不放。</summary>
     internal const int QuickPageIndex = 5;
@@ -73,11 +73,6 @@ public sealed class NativeIslandApp : IDisposable
     /// <summary>「日程」页的下标——可直接在岛上增删改。</summary>
     internal const int TasksPageIndex = 3;
 
-    /// <summary>
-    /// 「音量」页下标。**追加在最后**：页签顺序与既有下标（日程=3、快捷=5）都被自测钉着，
-    /// 插在中间会连带改掉它们。
-    /// </summary>
-    internal const int VolumePageIndex = 6;
 
     /// <summary>ISO 星期（1=周一 … 7=周日）对应的中文单字。</summary>
     private static readonly string[] WdNames = { "一", "二", "三", "四", "五", "六", "日" };
@@ -717,10 +712,17 @@ public sealed class NativeIslandApp : IDisposable
     private bool _topmostNow = true;   // 当前实际置顶状态
     private bool _volPopup;      // 音量竖向弹出条是否展开
     private bool _volDrag;       // 正在拖动音量（媒体页的竖向弹出条）
-    private bool _volPageDrag;   // 正在拖动「音量」页的横向条
-    /// <summary>音量页显示用的快照：COM 读不便宜，而面板每帧都在重绘，所以按秒缓存。</summary>
+    private bool _volQuickDrag;  // 正在拖动「快捷」页底部的横向音量条
+    /// <summary>音量显示用的快照：COM 读不便宜，而面板每帧都在重绘，所以按秒缓存。</summary>
     private (bool Available, float Level, bool Muted) _volShown;
     private long _volReadAt;
+    /// <summary>「快捷」页里展开的设备列表：0 = 没展开，1 = 输出，2 = 输入；滚动位置另存。</summary>
+    private int _devListOpen;
+    private int _devScroll;
+    private AudioDeviceService? _deviceSvc;
+    private AudioDeviceService.DeviceList? _outDevs, _inDevs;
+    /// <summary>上次枚举设备的时间：失败时别每帧重试（COM 枚举不适合按帧跑）。</summary>
+    private long _devReadAt;
     private bool _seekDrag;
     private long? _seekPreviewMs;
     private DateTime? _seekPreviewAt;
@@ -802,12 +804,11 @@ public sealed class NativeIslandApp : IDisposable
     {
         _hover = true;
         _leftAt = null;
-        if (_volPageDrag)
+        if (_volQuickDrag)
         {
-            var (ixv, iyv, iwv, ihv) = Island();
-            ApplyVolumeLevel((float)VolumeFromX(
-                VolumePageTrack(PageBody(new SKRect(ixv, iyv, ixv + iwv, iyv + ihv), _lastScale),
-                    _lastScale), x));
+            var (ixq, iyq, iwq, ihq) = Island();
+            var bq = PageBody(new SKRect(ixq, iyq, ixq + iwq, iyq + ihq), _lastScale);
+            ApplyVolumeLevel((float)VolumeFromX(QuickAudioTrack(bq, _lastScale), x));
             return;
         }
         if (_volDrag)
@@ -848,8 +849,20 @@ public sealed class NativeIslandApp : IDisposable
         if (_mode != "expanded") return;
         _hover = true;
         _leftAt = null;
+        // 设备列表展开时滚轮滚列表（否则被挡住的设备够不到）
+        if (_devListOpen != 0)
+        {
+            var (ixw, iyw, iww, ihw) = Island();
+            var bodyW = PageBody(new SKRect(ixw, iyw, ixw + iww, iyw + ihw), _lastScale);
+            int total = (_devListOpen == 1 ? _outDevs : _inDevs)?.Items.Length ?? 0;
+            int max = Math.Max(0, total - QuickDevListRows(bodyW, _lastScale));
+            _devScroll = Math.Clamp(_devScroll + (delta < 0 ? 1 : -1), 0, max);
+            return;
+        }
         int dir = delta > 0 ? -1 : 1;
         _page = (_page + dir + PageNames.Length) % PageNames.Length;
+        _devListOpen = 0;
+        _devScroll = 0;
     }
 
     private void CancelPress()
@@ -876,9 +889,9 @@ public sealed class NativeIslandApp : IDisposable
             _volDrag = false;
             return;
         }
-        if (_volPageDrag)
+        if (_volQuickDrag)
         {
-            _volPageDrag = false;
+            _volQuickDrag = false;
             return;
         }
         if (_seekDrag)
@@ -981,6 +994,8 @@ public sealed class NativeIslandApp : IDisposable
                         if (x >= tx && x <= tx + tw)
                         {
                             _page = i;
+                            _devListOpen = 0;
+                            _devScroll = 0;
                             TraceClick($"tab hit -> page {i} ({PageNames[i]})");
                             return;
                         }
@@ -1086,31 +1101,58 @@ public sealed class NativeIslandApp : IDisposable
                 SetMode("compact");
                 return;
             }
-            // 「音量」页：点横条设音量（按住拖也行）、点静音钮切静音。点空白收起。
-            if (PageHandlerOwnsClick(mediaView, _page, VolumePageIndex))
+            // 「快捷」页：安全/自定义卡单击执行；危险动作长按 0.9 秒确认。点空白收起。
+            if (PageHandlerOwnsClick(mediaView, _page, QuickPageIndex))
             {
-                var body = PageBody(new SKRect(ix, iy, ix + iw, iy + ih), _lastScale);
-                if (VolumePageValue().Available)
+                var qb = PageBody(new SKRect(ix, iy, ix + iw, iy + ih), _lastScale);
+                // 设备列表展开时：点设备即切默认，点列表外收起
+                if (_devListOpen != 0)
                 {
-                    if (VolumePageMute(body, _lastScale).Contains((float)x, (float)y))
+                    int which = _devListOpen;
+                    var dl = which == 1 ? _outDevs : _inDevs;
+                    int rows = QuickDevListRows(qb, _lastScale);
+                    if (dl is { } l)
+                    {
+                        for (int r = 0; r < rows; r++)
+                        {
+                            int idx = _devScroll + r;
+                            if (idx >= l.Items.Length) break;
+                            if (!QuickDevItem(qb, _lastScale, r).Contains((float)x, (float)y)) continue;
+                            ApplyDeviceSwitch(which, l.Items[idx].Id);
+                            return;
+                        }
+                    }
+                    if (!QuickDevList(qb, _lastScale).Contains((float)x, (float)y))
+                    {
+                        _devListOpen = 0;
+                        _devScroll = 0;
+                    }
+                    return;
+                }
+                // 底部音频区：静音钮 / 音量条（可拖）/ 输出·输入两行
+                {
+                    var muteRect = QuickAudioMute(qb, _lastScale);
+                    if (muteRect.Contains((float)x, (float)y))
                     {
                         ApplyVolumeMuteToggle();
                         return;
                     }
-                    var track = VolumePageTrack(body, _lastScale);
+                    var track = QuickAudioTrack(qb, _lastScale);
                     if (track.Contains((float)x, (float)y))
                     {
                         ApplyVolumeLevel((float)VolumeFromX(track, x));
-                        _volPageDrag = true;
+                        _volQuickDrag = true;
+                        return;
+                    }
+                    for (int i = 0; i < 2; i++)
+                    {
+                        if (!QuickDevRow(qb, _lastScale, i).Contains((float)x, (float)y)) continue;
+                        _devListOpen = i + 1;
+                        _devScroll = 0;
+                        RefreshDeviceLists();
                         return;
                     }
                 }
-                SetMode("compact");
-                return;
-            }
-            // 「快捷」页：安全/自定义卡单击执行；危险动作长按 0.9 秒确认。点空白收起。
-            if (PageHandlerOwnsClick(mediaView, _page, QuickPageIndex))
-            {
                 var g = QuickGridGeom();
                 for (int i = 0; i < g.Cells.Length; i++)
                 {
@@ -1961,7 +2003,7 @@ public sealed class NativeIslandApp : IDisposable
     /// 音量页显示用的值：优先诊断注入，其次真实设备；真实读取按秒缓存——COM 读不便宜，
     /// 而面板每帧都在重绘。这一切都在**岛线程**上发生，所以不存在跨线程用 COM 的问题。
     /// </summary>
-    private (bool Available, float Level, bool Muted) VolumePageValue(bool force = false)
+    private (bool Available, float Level, bool Muted) VolumeValue(bool force = false)
     {
         if (_volumeOverride is { } ov)
             return (true, Math.Clamp(ov.level, 0f, 1f), ov.muted);
@@ -1978,30 +2020,85 @@ public sealed class NativeIslandApp : IDisposable
     private void ApplyVolumeLevel(float level)
     {
         _volumeSvc?.SetVolume(level);       // 服务内部会把 0 以上的音量自动解除静音
-        VolumePageValue(force: true);       // 立刻刷新，界面不显示旧值
+        VolumeValue(force: true);       // 立刻刷新，界面不显示旧值
     }
 
     /// <summary>音量页：切静音（点静音钮走这里）。</summary>
     private void ApplyVolumeMuteToggle()
     {
         _volumeSvc?.ToggleMute();
-        VolumePageValue(force: true);
+        VolumeValue(force: true);
+    }
+
+    /// <summary>诊断用：音量当前显示的快照。**只读缓存、不碰 COM**，跨线程读也安全。</summary>
+    internal (bool Available, float Level, bool Muted) VolumeStateForTest => _volShown;
+
+    /// <summary>诊断用：让岛线程立刻重读一次设备。</summary>
+    internal void VolumeRefreshForTest() => Post(() => VolumeValue(force: true));
+
+    /// <summary>诊断用：走和点击完全同一条路径改音量（在岛线程上执行）。</summary>
+    internal void VolumeSetForTest(float level) => Post(() => ApplyVolumeLevel(level));
+
+    /// <summary>诊断用：走和点击完全同一条路径切静音。</summary>
+    internal void VolumeToggleMuteForTest() => Post(() => ApplyVolumeMuteToggle());
+
+    /// <summary>
+    /// 离屏渲染用：直接把设备列表摆成展开态。**同步改字段**（不走岛线程队列）——
+    /// 离屏诊断里没有消息循环，Post 出去的活儿永远不会被抽干，帧就会一直是折叠态。
+    /// </summary>
+    internal void ForceDeviceList(int which) => _devListOpen = Math.Clamp(which, 0, 2);
+
+    /// <summary>诊断用：展开设备列表并重新枚举（在岛线程上执行，用于真机探针）。</summary>
+    internal void ForceDeviceListForTest(int which) => Post(() =>
+    {
+        _devListOpen = Math.Clamp(which, 0, 2);
+        _devScroll = 0;
+        if (_devListOpen != 0) RefreshDeviceLists();
+    });
+
+    /// <summary>诊断用：设备列表状态（展开哪侧、各自几个设备、滚到哪）。</summary>
+    internal (int Open, int Outputs, int Inputs, int Scroll) DeviceListStateForTest
+        => (_devListOpen, _outDevs?.Items.Length ?? 0, _inDevs?.Items.Length ?? 0, _devScroll);
+
+    /// <summary>
+    /// 枚举两侧设备并缓存（**在岛线程上跑**：MMDeviceEnumerator / IPolicyConfig 都是非敏捷 COM）。
+    /// 只在展开列表时枚举一次，避免每帧碰 COM。
+    /// </summary>
+    private void RefreshDeviceLists()
+    {
+        try
+        {
+            _deviceSvc ??= new AudioDeviceService();
+            _outDevs = _deviceSvc.List(AudioDeviceService.Flow.Output);
+            _inDevs = _deviceSvc.List(AudioDeviceService.Flow.Input);
+        }
+        catch { /* 枚举失败就当没有设备，界面会写明 */ }
     }
 
     /// <summary>
-    /// 诊断用：音量页当前显示的快照。**只读缓存、不碰 COM**，所以诊断进程从别的线程读也安全；
-    /// 要强制重读设备请用 VolumePageRefreshForTest（它会排到岛线程上执行）。
+    /// 切默认设备（点列表项走这里）。**切完必须回读**：调用返回成功不等于真的换了——
+    /// 实测 FxSound 这类输出端增强软件会把默认设备抢回去，所以没生效就如实给一行提示，
+    /// 而不是把界面改成"已切换"骗用户。
     /// </summary>
-    internal (bool Available, float Level, bool Muted) VolumePageStateForTest => _volShown;
-
-    /// <summary>诊断用：让岛线程立刻重读一次设备。</summary>
-    internal void VolumePageRefreshForTest() => Post(() => VolumePageValue(force: true));
-
-    /// <summary>诊断用：走和点击完全同一条路径改音量（在岛线程上执行）。</summary>
-    internal void VolumePageSetForTest(float level) => Post(() => ApplyVolumeLevel(level));
-
-    /// <summary>诊断用：走和点击完全同一条路径切静音。</summary>
-    internal void VolumePageToggleMuteForTest() => Post(() => ApplyVolumeMuteToggle());
+    private void ApplyDeviceSwitch(int which, string deviceId)
+    {
+        var flow = which == 1 ? AudioDeviceService.Flow.Output : AudioDeviceService.Flow.Input;
+        string targetName = (_outDevs, _inDevs) is var (o, i)
+            ? ((which == 1 ? o : i)?.Items.FirstOrDefault(d => d.Id == deviceId).Name ?? "该设备")
+            : "该设备";
+        try
+        {
+            _deviceSvc ??= new AudioDeviceService();
+            _deviceSvc.SetDefault(flow, deviceId);
+        }
+        catch { /* 切不动就保持原样，下面按真实状态给提示 */ }
+        RefreshDeviceLists();
+        string nowDefault = ((which == 1 ? _outDevs : _inDevs)?.Items.FirstOrDefault(d => d.IsDefault).Id) ?? "";
+        if (string.Equals(nowDefault, deviceId, StringComparison.OrdinalIgnoreCase))
+            ShowHint($"已切到「{targetName}」");
+        else
+            ShowHint("没切换成功：多半是音频增强/虚拟声卡软件把默认设备抢回去了（例如 FxSound）");
+    }
 
     /// <summary>离屏渲染用：注入歌词（null 恢复读真实服务）。当前位置仍取自注入的媒体状态。</summary>
     internal void InjectLyrics(LyricLine[]? lines) => _lyricsOverride = lines;
@@ -2581,14 +2678,48 @@ public sealed class NativeIslandApp : IDisposable
     internal static double VolumeFromY(SKRect groove, double y)
         => Math.Clamp((groove.Bottom - y) / Math.Max(1, groove.Height), 0, 1);
 
-    /// <summary>「音量」页的横向主音量条（绘制与命中测试共用，否则点不准）。</summary>
-    internal static SKRect VolumePageTrack(SKRect body, float s)
-        => new(body.Left + 24 * s, body.Top + 132 * s, body.Right - 24 * s, body.Top + 152 * s);
+    // ---- 「快捷」页底部音频区（绘制与命中测试共用这些矩形，否则会点不准）----
 
-    /// <summary>「音量」页的静音按钮（在横条下方，不与横条重叠）。</summary>
-    internal static SKRect VolumePageMute(SKRect body, float s)
-        => new(body.Left + 24 * s, body.Top + 168 * s,
-               body.Left + 24 * s + 104 * s, body.Top + 168 * s + 34 * s);
+    /// <summary>底部音频区高度：音量一行 + 输出/输入两行 + 上方分隔线。</summary>
+    internal const float QuickAudioBlockH = 96;
+
+    /// <summary>横向主音量条（右侧留给百分比与静音钮）。</summary>
+    internal static SKRect QuickAudioTrack(SKRect body, float s)
+        => new(body.Left + 22 * s, body.Bottom - 84 * s, body.Right - 96 * s, body.Bottom - 76 * s);
+
+    /// <summary>静音钮。</summary>
+    internal static SKRect QuickAudioMute(SKRect body, float s)
+        => new(body.Right - 58 * s, body.Bottom - 88 * s, body.Right - 6 * s, body.Bottom - 66 * s);
+
+    /// <summary>设备行：0 = 输出、1 = 输入（点它展开选择列表）。</summary>
+    internal static SKRect QuickDevRow(SKRect body, float s, int index)
+    {
+        float top = body.Bottom - (index == 0 ? 62 : 34) * s;
+        return new SKRect(body.Left, top, body.Right, top + 26 * s);
+    }
+
+    /// <summary>展开后的设备列表区域（占掉动作格的位置）。</summary>
+    internal static SKRect QuickDevList(SKRect body, float s)
+        => new(body.Left, body.Top + 4 * s, body.Right, body.Bottom - (QuickAudioBlockH + 4) * s);
+
+    /// <summary>列表标题行占掉的高度（不占的话标题会和第一项压在同一条基线上）。</summary>
+    internal const float QuickDevListHeaderH = 20;
+
+    /// <summary>底部滚动提示行占的高度（不占的话提示会压住最后一项）。</summary>
+    internal const float QuickDevListFooterH = 14;
+
+    /// <summary>列表一屏能放几行（至少 1 行）。</summary>
+    internal static int QuickDevListRows(SKRect body, float s)
+        => Math.Max(1, (int)Math.Floor(
+            (QuickDevList(body, s).Height - (QuickDevListHeaderH + QuickDevListFooterH) * s) / (26 * s)));
+
+    /// <summary>列表第 row 行的矩形（从标题行下面开始）。</summary>
+    internal static SKRect QuickDevItem(SKRect body, float s, int row)
+    {
+        var list = QuickDevList(body, s);
+        float top = list.Top + QuickDevListHeaderH * s + row * 26 * s;
+        return new SKRect(list.Left, top, list.Right, top + 24 * s);
+    }
 
     /// <summary>按横向位置换算音量（0..1，左端 = 0）。纯函数，自测钉住。</summary>
     internal static double VolumeFromX(SKRect track, double x)
@@ -2653,10 +2784,7 @@ public sealed class NativeIslandApp : IDisposable
                 case 3: DrawPageTasks(canvas, body, s); break;
                 case 4: DrawPageMonth(canvas, body, s); break;
                 case 5: DrawPageQuick(canvas, body, s); break;
-                case 6: DrawPageVolume(canvas, body, s); break;
             }
-            DrawText(canvas, "滚轮 / 点击页签切换", r.Left + PagePadX * s, r.Top + 303 * s,
-                11.5f * s, Pal.Dim);
         }
     }
 
@@ -3407,56 +3535,20 @@ public sealed class NativeIslandApp : IDisposable
     /// 「快捷」页：2×3 起步的玻璃方卡（彩色圆钮 + 标签）。危险动作整卡红框 + 长按进度弧；
     /// 「＋」槽位打开自定义程序编辑；自定义卡右键移除由命中层处理。
     /// </summary>
-    /// <summary>
-    /// 「音量」页：主音量横向条（点/拖都行）+ 静音钮。
-    /// 放在岛上而不是设置窗口里：一是随手就能调，二是**这句代码本来就跑在岛线程上**，
-    /// 直接碰 AudioEndpointVolume（非敏捷 COM）不会踩跨线程的坑。
-    /// </summary>
-    private void DrawPageVolume(SKCanvas canvas, SKRect b, float s)
-    {
-        var (available, level, muted) = VolumePageValue();
-        var ac = PageAccent(VolumePageIndex);
-        if (!available)
-        {
-            DrawText(canvas, "没有找到可用的播放设备", b.Left + 24 * s, b.Top + 64 * s, 15 * s, Pal.Dim);
-            DrawText(canvas, "（或音频服务不可用，音量控制暂时不可用）",
-                b.Left + 24 * s, b.Top + 88 * s, 12 * s, Pal.Dim);
-            return;
-        }
-
-        float shown = muted ? 0f : Math.Clamp(level, 0f, 1f);
-        DrawText(canvas, muted ? "已静音" : $"{Math.Round(shown * 100)}%",
-            b.Left + 24 * s, b.Top + 62 * s, 32 * s, Pal.Fg);
-        DrawText(canvas, "主音量", b.Left + 24 * s, b.Top + 86 * s, 12 * s, Pal.Dim);
-
-        var track = VolumePageTrack(b, s);
-        DrawMaterialSurface(canvas, track, track.Height / 2, Pal.Track);
-        float fillW = track.Width * shown;
-        if (fillW > 0.5f)
-        {
-            using var fp = new SKPaint { Color = muted ? Pal.Dim : ac, IsAntialias = true };
-            canvas.DrawRoundRect(new SKRect(track.Left, track.Top, track.Left + fillW, track.Bottom),
-                track.Height / 2, track.Height / 2, fp);
-        }
-        using (var kp = new SKPaint { Color = Pal.Fg, IsAntialias = true })
-            canvas.DrawCircle(track.Left + fillW, track.MidY, 8 * s, kp);
-
-        var mute = VolumePageMute(b, s);
-        using (var mb = new SKPaint
-        {
-            Color = muted ? BackgroundAlpha(ac, 60) : Pal.Card,
-            IsAntialias = true,
-        })
-            canvas.DrawRoundRect(mute, 10 * s, 10 * s, mb);
-        DrawText(canvas, muted ? "取消静音" : "静音", mute.Left + 14 * s, mute.MidY + 4.5f * s,
-            12.5f * s, muted ? Pal.Fg : Pal.Sub);
-    }
-
     private void DrawPageQuick(SKCanvas canvas, SKRect b, float s)
     {
+        if (_devListOpen != 0)
+        {
+            DrawQuickAudio(canvas, b, s);
+            DrawQuickDeviceList(canvas, b, s);
+            return;
+        }
         DrawText(canvas, "第一行单击执行 · 危险动作按住 0.9 秒 · 点「＋」添加自定义程序",
             b.Left, b.Top + 11 * s, 10.5f * s, Pal.Dim);
-        var g = QuickGridLayout(new SKRect(b.Left, b.Top + 22 * s, b.Right, b.Bottom), s, _cfg.QuickCustoms.Count);
+        // 动作格让出底部音频区（音量一行 + 输出/输入两行）
+        var g = QuickGridLayout(
+            new SKRect(b.Left, b.Top + 22 * s, b.Right, b.Bottom - QuickAudioBlockH * s),
+            s, _cfg.QuickCustoms.Count);
         for (int i = 0; i < g.Cells.Length; i++)
         {
             var cell = g.Cells[i];
@@ -3554,8 +3646,127 @@ public sealed class NativeIslandApp : IDisposable
                 cell.Top + cell.Height * 0.75f, 11 * s, Pal.Sub);
         }
 
+        DrawQuickAudio(canvas, b, s);
         string? tip = QuickPressTip();
         if (tip is not null) DrawTip(canvas, b, s, tip);
+    }
+
+    /// <summary>
+    /// 「快捷」页底部的音频区：主音量条（点/拖都行）+ 静音钮 + 输出/输入两行（点它展开设备列表）。
+    /// 全在岛线程上跑，直接碰音量与设备 COM —— 这两个都是非敏捷对象，换线程会被静默吞掉。
+    /// </summary>
+    private void DrawQuickAudio(SKCanvas canvas, SKRect b, float s)
+    {
+        // 设备名要进这一页就得先枚举一次（否则折叠态两行永远是空的）。
+        // 失败时每 5 秒才重试，避免每帧碰 COM。
+        if (_outDevs is null || _inDevs is null)
+        {
+            long now = Environment.TickCount64;
+            if (now - _devReadAt > 5000)
+            {
+                _devReadAt = now;
+                RefreshDeviceLists();
+            }
+        }
+        var (available, level, muted) = VolumeValue();
+        var ac = PageAccent(QuickPageIndex);
+        float sepY = b.Bottom - (QuickAudioBlockH - 4) * s;
+        using (var line = new SKPaint { Color = Pal.Track, IsAntialias = true, StrokeWidth = 1 * s })
+            canvas.DrawLine(b.Left, sepY, b.Right, sepY, line);
+
+        var track = QuickAudioTrack(b, s);
+        DrawText(canvas, muted ? "\uD83D\uDD07" : "\uD83D\uDD0A", b.Left + 4 * s, track.MidY + 4.5f * s,
+            13 * s, available && !muted ? ac : Pal.Dim);
+        DrawMaterialSurface(canvas, track, track.Height / 2, Pal.Track);
+        float shown = muted ? 0f : Math.Clamp(level, 0f, 1f);
+        float fillW = track.Width * shown;
+        if (available)
+        {
+            if (fillW > 0.5f)
+            {
+                using var fp = new SKPaint { Color = muted ? Pal.Dim : ac, IsAntialias = true };
+                canvas.DrawRoundRect(new SKRect(track.Left, track.Top, track.Left + fillW, track.Bottom),
+                    track.Height / 2, track.Height / 2, fp);
+            }
+            using (var kp = new SKPaint { Color = Pal.Fg, IsAntialias = true })
+                canvas.DrawCircle(track.Left + fillW, track.MidY, 6.5f * s, kp);
+            DrawText(canvas, muted ? "静音" : $"{Math.Round(shown * 100)}%",
+                b.Right - 92 * s, track.MidY + 4.5f * s, 11.5f * s, Pal.Sub);
+        }
+        else
+        {
+            DrawText(canvas, "没有找到播放设备", b.Right - 136 * s, track.MidY + 4.5f * s, 11 * s, Pal.Dim);
+        }
+
+        var mute = QuickAudioMute(b, s);
+        using (var mp = new SKPaint
+        {
+            Color = muted ? BackgroundAlpha(ac, 60) : Pal.Card,
+            IsAntialias = true,
+        })
+            canvas.DrawRoundRect(mute, 8 * s, 8 * s, mp);
+        string muteText = muted ? "取消静音" : "静音";
+        DrawText(canvas, muteText, mute.MidX - MeasureText(muteText, 11 * s) / 2,
+            mute.MidY + 4 * s, 11 * s, muted ? Pal.Fg : Pal.Sub);
+
+        DrawDeviceRow(canvas, b, s, 0, _outDevs, "输出");
+        DrawDeviceRow(canvas, b, s, 1, _inDevs, "输入");
+    }
+
+    /// <summary>设备行：标签 + 当前设备名（超宽省略）+ 右侧的"切换"。</summary>
+    private void DrawDeviceRow(SKCanvas canvas, SKRect b, float s, int index,
+        AudioDeviceService.DeviceList? list, string label)
+    {
+        var row = QuickDevRow(b, s, index);
+        DrawText(canvas, label, row.Left + 2 * s, row.MidY + 4 * s, 11.5f * s, Pal.Dim);
+        string name = list is { } l
+            ? (l.Items.FirstOrDefault(d => d.IsDefault).Name ?? "（未设置）")
+            : "（没有找到设备）";
+        string arrow = _devListOpen == index + 1 ? "收起" : "切换";
+        float arrowW = MeasureText(arrow, 11 * s);
+        var nameBox = new SKRect(row.Left + 40 * s, row.Top, row.Right - arrowW - 12 * s, row.Bottom);
+        DrawText(canvas, Ellipsize(name, 11.5f * s, nameBox.Width), nameBox.Left, row.MidY + 4 * s,
+            11.5f * s, list is null ? Pal.Dim : Pal.Fg);
+        DrawText(canvas, arrow, row.Right - arrowW, row.MidY + 4 * s, 11 * s, Pal.Accent);
+    }
+
+    /// <summary>展开的设备列表（占掉动作格的位置）：点一项切默认设备，滚轮翻页。</summary>
+    private void DrawQuickDeviceList(SKCanvas canvas, SKRect b, float s)
+    {
+        int which = _devListOpen;
+        var list = which == 1 ? _outDevs : _inDevs;
+        string label = which == 1 ? "输出设备" : "输入设备";
+        var area = QuickDevList(b, s);
+        DrawText(canvas, list is null
+                ? label + "：枚举失败（没有设备或音频服务不可用）"
+                : $"{label}（{list.Value.Items.Length}）点一项即切换",
+            area.Left + 2 * s, area.Top + 12 * s, 11.5f * s, Pal.Dim);
+        if (list is not { } l) return;
+
+        int rows = QuickDevListRows(b, s);
+        for (int r = 0; r < rows; r++)
+        {
+            int idx = _devScroll + r;
+            if (idx >= l.Items.Length) break;
+            var d = l.Items[idx];
+            var item = QuickDevItem(b, s, r);
+            if (d.IsDefault)
+            {
+                using var bg = new SKPaint { Color = BackgroundAlpha(Pal.Accent, 33), IsAntialias = true };
+                canvas.DrawRoundRect(item, 8 * s, 8 * s, bg);
+            }
+            DrawText(canvas, "\u25CF", item.Left + 8 * s, item.MidY + 4 * s, 9 * s,
+                d.IsDefault ? Pal.Accent : Pal.Dim);
+            float tagW = d.IsDefault ? MeasureText("当前", 10.5f * s) : 0;
+            DrawText(canvas, Ellipsize(d.Name, 11.5f * s, Math.Max(0, item.Width - 36 * s - tagW)),
+                item.Left + 22 * s, item.MidY + 4 * s, 11.5f * s, d.IsDefault ? Pal.Fg : Pal.Sub);
+            if (d.IsDefault)
+                DrawText(canvas, "当前", item.Right - tagW - 6 * s, item.MidY + 4 * s, 10.5f * s, Pal.Accent);
+        }
+        if (l.Items.Length > rows)
+            DrawText(canvas,
+                $"\u2195 滚轮查看更多　{_devScroll + 1}-{Math.Min(_devScroll + rows, l.Items.Length)}/{l.Items.Length}",
+                area.Left + 2 * s, area.Bottom - 3 * s, 10.5f * s, Pal.Dim);
     }
 
     /// <summary>「快捷」页底部那行提示：长按中给出进度，误触后给出原因，其余为 null。</summary>

@@ -13,7 +13,8 @@
 | **SMTC 媒体会话** | `Services/MediaSessionService.cs` | CsWinRT 直连，无 PS 桥；多会话选源 + 浏览器标题清理 |
 | 性能采样 / 天气 | `Services/Monitors.cs` | CPU/内存/网络 + Open-Meteo；定位链=手填优先 → Windows 系统定位（STA 泵线程宿主 WinRT）→ IP 兜底 |
 | 音频频谱 | `Services/AudioSpectrumService.cs` | WASAPI 环回 + 5 段 Goertzel + AGC；派生自 NotchPeninsula（Apache-2.0，见 THIRD-PARTY.md） |
-| 系统音量 | `Services/AudioVolumeService.cs` | 主音量读写 + 静音切换；派生自 NotchPeninsula `Audio.cs`；无设备时整行隐藏。岛上「音量」页与媒体页的音量弹出条都直接用它——**这些代码都在岛线程上跑**，而 AudioEndpointVolume 是非敏捷 COM 对象，跨线程误用会被服务的 try/catch 吞成"设备不可用"（静默错），别把它挪到别的线程去调 |
+| 音频设备 | `Services/AudioDeviceService.cs` | 枚举播放/录音端点 + 切系统默认设备（未公开 `IPolicyConfig::SetDefaultEndpoint`，SoundSwitch/EarTrumpet 同款）；**不信 S_OK**，设完回读校验 + 重试；`--audio-probe` 真机验证（录音侧实测可切，播放侧会被 FxSound 之类抢回） |
+| 系统音量 | `Services/AudioVolumeService.cs` | 主音量读写 + 静音切换；派生自 NotchPeninsula `Audio.cs`；无设备时整行隐藏。「快捷」页底部的音频区与媒体页的音量弹出条都直接用它——**这些代码都在岛线程上跑**，而 AudioEndpointVolume 是非敏捷 COM 对象，跨线程误用会被服务的 try/catch 吞成"设备不可用"（静默错），别把它挪到别的线程去调 |
 | 在线歌词 | `Services/LyricsService.cs` | LRCLIB 同步歌词（LRC 解析 + 按播放位置取句）；离线/查不到静默留空 |
 | 单实例 + 命名管道唤出 | `Platform/SingleInstance.cs` | 含 `WindowFocus`（跳源窗口） |
 | 开机自启 | `Platform/AutoStart.cs` | HKCU Run |
@@ -36,7 +37,7 @@
 ## 交互模型（重要）
 
 - **紧凑态永远只有时间 / 媒体 / 通知**，没有任何功能按钮，也不响应悬停；
-- 所有功能在**点击展开后的面板**里：页签 计划 / 性能 / 天气 / **日程** / **日历** / **快捷** / **音量**（滚轮或点击切换）；
+- 所有功能在**点击展开后的面板**里：页签 计划 / 性能 / 天气 / **日程** / **日历** / **快捷**（滚轮或点击切换；面板底部那行「滚轮 / 点击页签切换」提示已按用户要求删掉）；
 - 系统通知到达时**抢占胶囊**（约 6 秒，含媒体播放中），点击唤醒来源应用；
 - 组合模式（默认关闭）下胶囊同屏显示 时间 + 硬件 + 媒体，宽度按内容自动伸缩；
   三个「定宽槽」（时钟按 `88:88`、百分比按 `100%`、网速按 `999.9 MB/s`）保证倒计时/数字跳动时宽度不抖；
@@ -84,7 +85,7 @@ lingyun.exe --self-test          # 195 条契约断言（频谱 DSP、选源回�
 lingyun.exe --self-test --diag-quick   # 自测 + 快捷页契约报告（写 灵云-diag.txt）
 lingyun.exe --dump-frames        # 离屏渲染各状态帧（写 灵云-diag/*.png）；含 -glass 液态玻璃帧
 lingyun.exe --backdrop-probe 20  # 真机验证自适应输入：采到的是背景还是岛自己 + 单次耗时 + 决策预览
-lingyun.exe --volume-probe       # 真机验证音量链路：岛线程桥读写回读 + 设置窗口音量页真的把值显示出来
+lingyun.exe --volume-probe       # 真机验证音量链路：岛上读写回读一致、静音可切、测完还原用户音量
 lingyun.exe --acrylic-probe      # 真机验证亚克力是"活的"：换亮/暗两块桌面背景，窗口内亮度必须跟着变（死色/黑屏会被抓出来）
 lingyun.exe --settings-smoke 8 glass   # 起设置窗口停留 8 秒（可选材质 acrylic|glass|classic），供真机截图核对
 lingyun.exe --spectrum-probe 5   # 音频链路自检：频谱捕获峰值 + SMTC 会话状态 + 音量设备 + 天气定位来源

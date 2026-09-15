@@ -1093,16 +1093,24 @@ internal static class Diag
                 appGlass.ForceFocus("timer");
                 appGlass.ForcePage(0);
             }),
-            // 「音量」页：注入 42% 出图（真机没声卡也能看布局）
-            ("page-volume", () =>
+            // 「快捷」页底部音频区（音量并进这里了）：注入 42% 出图，真机没声卡也能看布局
+            ("page-quick-audio", () =>
             {
                 appPages.InjectVolume(0.42f);
-                appPages.ForcePage(NativeIslandApp.VolumePageIndex);
+                appPages.ForceDeviceList(0);
+                appPages.ForcePage(NativeIslandApp.QuickPageIndex);
             }),
-            ("page-volume-muted", () =>
+            ("page-quick-audio-muted", () =>
             {
                 appPages.InjectVolume(0.42f, muted: true);
-                appPages.ForcePage(NativeIslandApp.VolumePageIndex);
+                appPages.ForceDeviceListForTest(0);
+                appPages.ForcePage(NativeIslandApp.QuickPageIndex);
+            }),
+            ("page-quick-devices", () =>
+            {
+                appPages.InjectVolume(0.42f);
+                appPages.ForcePage(NativeIslandApp.QuickPageIndex);
+                appPages.ForceDeviceList(1);   // 展开输出设备列表
             }),
             ("page-quick-glass", () =>
             {
@@ -1170,7 +1178,8 @@ internal static class Diag
             ["page-plan"] = appPages, ["page-perf"] = appPages, ["page-weather"] = appPages,
             ["page-tasks"] = appPages, ["page-month"] = appPages,
             ["page-quick"] = appPages, ["page-quick-hold-forced"] = appPages,
-            ["page-volume"] = appPages, ["page-volume-muted"] = appPages,
+            ["page-quick-audio"] = appPages, ["page-quick-audio-muted"] = appPages,
+            ["page-quick-devices"] = appPages,
             ["compact-clock-glass"] = appGlass, ["compact-clock-glass-40"] = appGlass40,
             ["expanded-plan-glass"] = appGlass, ["page-quick-glass"] = appGlass,
             ["expanded-media-style-b-glass"] = appGlassB, ["expanded-media-style-c-glass"] = appGlassC,
@@ -1856,18 +1865,18 @@ internal static class Diag
         island.Start();     // 面板绘制与音量读写都在岛线程上
         Pump(0.9);
 
-        // 页签里确实有「音量」，而且没把既有的「快捷」下标挤动
-        Check("音量页：页签里有它、且快捷页下标没被挤动",
-            Ui.NativeIslandApp.PageNames[Ui.NativeIslandApp.VolumePageIndex] == "音量"
-            && Ui.NativeIslandApp.QuickPageIndex == 5,
+        // 页签回到 6 个（音量并进了「快捷」页，不再单独占一页）
+        Check("音量：并进快捷页，页签没有再单开一页",
+            Ui.NativeIslandApp.PageNames.Length == 6
+            && Ui.NativeIslandApp.PageNames[Ui.NativeIslandApp.QuickPageIndex] == "快捷",
             $"pages={string.Join("/", Ui.NativeIslandApp.PageNames)}");
 
-        island.VolumePageRefreshForTest();
+        island.VolumeRefreshForTest();
         (bool Available, float Level, bool Muted) state = default;
         for (int i = 0; i < 60; i++)
         {
             Pump(0.05);
-            state = island.VolumePageStateForTest;
+            state = island.VolumeStateForTest;
             if (state.Available) break;
         }
         w.WriteLine($"岛线程读到：可用={state.Available}　音量={state.Level:P0}　静音={state.Muted}");
@@ -1877,38 +1886,38 @@ internal static class Diag
             w.WriteLine();
             return failed;
         }
-        Check("音量页：能读到真实设备音量（岛线程上直接读，没有跨线程问题）", true);
+        Check("音量：能读到真实设备音量（岛线程上直接读，没有跨线程问题）", true);
 
         float original = state.Level;
         bool muted0 = state.Muted;
 
         // 走"和点击完全相同"的路径设 37%
-        island.VolumePageSetForTest(0.37f);
+        island.VolumeSetForTest(0.37f);
         for (int i = 0; i < 60; i++)
         {
             Pump(0.05);
-            state = island.VolumePageStateForTest;
+            state = island.VolumeStateForTest;
             if (Math.Abs(state.Level - 0.37f) <= 0.02f) break;
         }
         w.WriteLine($"设 37% 后页面显示 = {state.Level:P0}");
-        Check("音量页：改音量真的落到系统上（回读一致）",
+        Check("音量：改音量真的落到系统上（回读一致）",
             Math.Abs(state.Level - 0.37f) <= 0.02f, $"回读={state.Level:P1}");
 
-        island.VolumePageToggleMuteForTest();
+        island.VolumeToggleMuteForTest();
         for (int i = 0; i < 60; i++)
         {
             Pump(0.05);
-            state = island.VolumePageStateForTest;
+            state = island.VolumeStateForTest;
             if (state.Muted != muted0) break;
         }
-        Check("音量页：静音能切换（切一次状态真的变）", state.Muted != muted0,
+        Check("音量：静音能切换（切一次状态真的变）", state.Muted != muted0,
             $"原={muted0} 切后={state.Muted}");
-        island.VolumePageToggleMuteForTest();
+        island.VolumeToggleMuteForTest();
         Pump(0.5);
 
-        island.VolumePageSetForTest(original);
+        island.VolumeSetForTest(original);
         Pump(0.5);
-        w.WriteLine($"已还原为原音量 {original:P0}（回读 {island.VolumePageStateForTest.Level:P0}）");
+        w.WriteLine($"已还原为原音量 {original:P0}（回读 {island.VolumeStateForTest.Level:P0}）");
 
         // 对照：把同一个服务放到别的线程上创建、再从主线程用 —— 就是"把音量页做进设置窗口"的等价写法
         Services.AudioVolumeService? cross = null;
@@ -2683,27 +2692,33 @@ internal static class Diag
                     popup.Bottom < glyph.Top && popup.MidX == glyph.MidX
                     && groove.Top >= popup.Top && groove.Bottom <= popup.Bottom
                     && NativeIslandApp.VolumeMuteRect(popup, 1f).Bottom <= groove.Top);
-                // 「音量」页（岛上的第 7 页）：页签顺序 + 几何（绘制与命中共用，算错就点不准）
+                // 「快捷」页底部的音频区（音量 + 输出/输入设备）：几何契约（绘制与命中共用，算错就点不准）
             {
-                Check("音量页：页签里有它、追加在最后（快捷页下标没被挤动）",
-                    NativeIslandApp.PageNames[NativeIslandApp.VolumePageIndex] == "音量"
-                    && NativeIslandApp.PageNames.Length == 7
-                    && NativeIslandApp.QuickPageIndex == 5);
-                var volBody = new SKRect(24, 56, 24 + 424, 56 + 229);
-                var volTrack = NativeIslandApp.VolumePageTrack(volBody, 1f);
-                var volMute = NativeIslandApp.VolumePageMute(volBody, 1f);
-                Check("音量页：横条与静音钮都在内容区内、互不重叠",
-                    volTrack.Left >= volBody.Left && volTrack.Right <= volBody.Right
-                    && volTrack.Top >= volBody.Top && volTrack.Bottom <= volBody.Bottom
-                    && volMute.Left >= volBody.Left && volMute.Right <= volBody.Right
-                    && volMute.Top >= volTrack.Bottom && volMute.Bottom <= volBody.Bottom,
-                    $"track={volTrack} mute={volMute}");
-                Check("音量页：横向位置换算（左端=0、右端=1、越界钳住）",
-                    Math.Abs(NativeIslandApp.VolumeFromX(volTrack, volTrack.Left)) < 0.001
-                    && Math.Abs(NativeIslandApp.VolumeFromX(volTrack, volTrack.Right) - 1) < 0.001
-                    && Math.Abs(NativeIslandApp.VolumeFromX(volTrack, volTrack.MidX) - 0.5) < 0.02
-                    && NativeIslandApp.VolumeFromX(volTrack, volTrack.Left - 999) == 0
-                    && NativeIslandApp.VolumeFromX(volTrack, volTrack.Right + 999) == 1);
+                Check("快捷页音频区：页签仍是 6 个、快捷页下标没被挤动",
+                    NativeIslandApp.PageNames.Length == 6
+                    && NativeIslandApp.PageNames[NativeIslandApp.QuickPageIndex] == "快捷");
+                var ab = new SKRect(24, 56, 24 + 424, 56 + 229);
+                var aTrack = NativeIslandApp.QuickAudioTrack(ab, 1f);
+                var aMute = NativeIslandApp.QuickAudioMute(ab, 1f);
+                var row0 = NativeIslandApp.QuickDevRow(ab, 1f, 0);
+                var row1 = NativeIslandApp.QuickDevRow(ab, 1f, 1);
+                var aList = NativeIslandApp.QuickDevList(ab, 1f);
+                Check("快捷页音频区：音量条/静音钮/两行设备/列表互不重叠且都在内容区内",
+                    aTrack.Left >= ab.Left && aTrack.Right < aMute.Left
+                    && aTrack.Top >= ab.Top && aTrack.Bottom <= ab.Bottom
+                    && aMute.Right <= ab.Right && aMute.Bottom <= ab.Bottom
+                    && row0.Top >= aTrack.Bottom && row1.Top >= row0.Bottom && row1.Bottom <= ab.Bottom
+                    && aList.Top >= ab.Top && aList.Bottom <= row0.Top,
+                    $"track={aTrack} mute={aMute} row0={row0} row1={row1} list={aList}");
+                Check("快捷页音频区：列表至少 2 行、行不越出列表，横向换算两端正确",
+                    NativeIslandApp.QuickDevListRows(ab, 1f) >= 2
+                    && NativeIslandApp.QuickDevItem(ab, 1f, 0).Left >= aList.Left
+                    && NativeIslandApp.QuickDevItem(ab, 1f, 1).Bottom <= aList.Bottom
+                    && Math.Abs(NativeIslandApp.VolumeFromX(aTrack, aTrack.Left)) < 0.001
+                    && Math.Abs(NativeIslandApp.VolumeFromX(aTrack, aTrack.Right) - 1) < 0.001
+                    && Math.Abs(NativeIslandApp.VolumeFromX(aTrack, aTrack.MidX) - 0.5) < 0.02
+                    && NativeIslandApp.VolumeFromX(aTrack, aTrack.Left - 999) == 0
+                    && NativeIslandApp.VolumeFromX(aTrack, aTrack.Right + 999) == 1);
             }
             Check("音量：纵向位置换算（顶部=1、底部=0、越界钳住）",
                     Math.Abs(NativeIslandApp.VolumeFromY(groove, groove.Top) - 1) < 0.001
