@@ -202,7 +202,7 @@ internal static class Diag
 
         if (args.Contains("--acrylic-probe"))
         {
-            try { failures += AcrylicProbe(w); }
+            try { failures += AcrylicProbe(w, args); }
             catch (Exception ex) { w.WriteLine("!! --acrylic-probe 异常: " + ex); failures++; }
         }
 
@@ -1474,8 +1474,11 @@ internal static class Diag
     // ==================================================================
     // --acrylic-probe ：证明设置窗口的亚克力是"活的"（跟着背后桌面变），而不是一层死色
     // ==================================================================
-    private static int AcrylicProbe(TextWriter w)
+    private static int AcrylicProbe(TextWriter w, string[] args)
     {
+        int argAt = Array.IndexOf(args, "--acrylic-probe");
+        // 可选参数 glass：换用液态玻璃那档材质（默认亚克力）。两档都要各自验一遍"透明度真的生效"。
+        bool glassMode = argAt >= 0 && argAt + 1 < args.Length && args[argAt + 1] == "glass";
         w.WriteLine("========== --acrylic-probe ==========");
         w.WriteLine("# HRESULT 说\"系统接受了官方材质\"，不等于它真的画出来了。这里拿桌面自身做对照：");
         w.WriteLine("#   窗口藏起来 → 采桌面上那块背景（D）；窗口显示 → 采窗口内**空白处**（W）。");
@@ -1490,7 +1493,10 @@ internal static class Diag
             else { failed++; w.WriteLine($"FAIL  {name}  {detail}"); }
         }
 
-        var cfg = new AppConfig { Theme = "dark", BaseTheme = "dark", Opacity = 100 };
+        var cfg = glassMode
+            ? new AppConfig { Theme = "liquid-glass", BaseTheme = "dark", Opacity = 100 }
+            : new AppConfig { Theme = "dark", BaseTheme = "dark", Opacity = 100 };
+        w.WriteLine($"材质：{(glassMode ? "液态玻璃" : "亚克力")}（theme={cfg.Theme}）");
         using var media = new MediaSessionService();
         using var island = new NativeIslandApp(cfg, media);
         var win = new Ui.SettingsWindow(cfg, island, () => { });
@@ -1506,13 +1512,15 @@ internal static class Diag
         // 系统会把越界的窗口钳回屏幕，那样"窗口内"和"桌面"采的就不是同一块地方，
         // 量出来的结构保留比甚至 >1（物理上不可能）—— 以前就是这么被污染的。
         var wa = Displays.WorkAreaOf(cfg.MonitorIndex);
-        const int block = 120;
+        // 背景块就和窗口内的取样条**同尺寸**：这样窗口摆上去后 D 与 W 量的是同一块桌面，
+        // 不会像 120×120 那样和 174×65 错开几十像素（错开会让"跟随比例/色差"看运气）。
+        int blockW = sw, blockH = sh;
         var cands = new List<(int X, int Y, double Lum)>();
         win.Hide();                       // 扫描时必须藏起来，否则采到的是窗口自己
         Pump(0.35);
-        for (int y = wa.Top + 8; y + block < wa.Bottom; y += 120)
-            for (int x = wa.Left + 8; x + block < wa.Right; x += 120)
-                if (sampler.Sample(x, y, block, block) is { Known: true } v)
+        for (int y = wa.Top + 8; y + blockH < wa.Bottom; y += 120)
+            for (int x = wa.Left + 8; x + blockW < wa.Right; x += 120)
+                if (sampler.Sample(x, y, blockW, blockH) is { Known: true } v)
                     cands.Add((x, y, v.Luminance));
         win.Show();
         Pump(0.4);
@@ -1527,20 +1535,21 @@ internal static class Diag
         cands.Sort((a, b) => b.Lum.CompareTo(a.Lum));
 
         // 把窗口摆到 (tx,ty) 上，量"桌面 D"和"窗口内 W"；位置被系统钳走就直接算这次无效
+        int rejected = 0;    // 被系统钳位而作废的次数——不为 0 才说明这道守卫真的在起作用
         bool TryMeasure(int tx, int ty, out double dv, out double wv, out double dStruct, out double wStruct,
             out Services.BackdropSample panel)
         {
             dv = wv = dStruct = wStruct = 0;
             panel = Services.BackdropSample.Unknown;
-            double wantL = tx + block / 2.0 - (sx + sw / 2.0);
-            double wantT = ty + block / 2.0 - (sy + sh / 2.0);
+            double wantL = tx + blockW / 2.0 - (sx + sw / 2.0);
+            double wantT = ty + blockH / 2.0 - (sy + sh / 2.0);
             win.Left = wantL;
             win.Top = wantT;
             Pump(0.3);
-            if (Math.Abs(win.Left - wantL) > 2 || Math.Abs(win.Top - wantT) > 2) return false;
+            if (Math.Abs(win.Left - wantL) > 2 || Math.Abs(win.Top - wantT) > 2) { rejected++; return false; }
             win.Hide();
             Pump(0.25);
-            var ds = sampler.Sample(tx, ty, block, block);
+            var ds = sampler.Sample(tx, ty, blockW, blockH);
             win.Show();
             Pump(0.3);
             var ws = sampler.Sample((int)(win.Left + sx), (int)(win.Top + sy), sw, sh);
@@ -1592,6 +1601,7 @@ internal static class Diag
                     + $"（结构 {dStructB:0.000} → {wStructB:0.000}）");
         w.WriteLine($"压在**暗**背景上：桌面亮度 {dDark:0.000} → 窗口内 {wDark:0.000}"
                     + $"（结构 {dStructD:0.000} → {wStructD:0.000}）");
+        w.WriteLine($"（因位置被系统钳走而作废的候选：{rejected} 次）");
         w.WriteLine();
 
         double deskDelta = dBright - dDark;
@@ -1633,9 +1643,12 @@ internal static class Diag
 
         // 同一位置 A/B：只改设置窗口自己的透明度（背景完全不动），窗口内颜色必须跟着变。
         // 这一条验的是"设置 → 解析 → 材质 → DWM → 像素"整条链真的接通了（只测纯函数会漏掉调用处）。
-        // 必须挑**亮**背景来做：暗底色下深浅两个色调算出来本来就接近，色差贴边说明不了问题。
-        win.Left = bx + block / 2.0 - (sx + sw / 2.0);
-        win.Top = by + block / 2.0 - (sy + sh / 2.0);
+        // 位置必须挑**中间灰阶**：在纯白背景上，44% 和 18% 的色调算出来都是白的（透过率乘白还是白），
+        // 色差会贴到 1～3 ——那不是"没生效"，是这条测法在极亮背景上不敏感（第一版就踩了这个坑）。
+        var mid = cands.OrderBy(c => Math.Abs(c.Lum - 0.35)).First();
+        w.WriteLine($"透明度 A/B 用的背景：({mid.X},{mid.Y}) 亮度 {mid.Lum:0.000}（挑最接近中间灰的那块）");
+        win.Left = mid.X + blockW / 2.0 - (sx + sw / 2.0);
+        win.Top = mid.Y + blockH / 2.0 - (sy + sh / 2.0);
         Pump(0.35);
         win.SetWindowOpacityForTest(100);
         Pump(0.45);
@@ -2522,6 +2535,26 @@ internal static class Diag
                 && ConfigStore.Normalize(new AppConfig { WindowOpacity = 12 }).WindowOpacity
                     == AppConfig.FollowWindowOpacity
                 && ConfigStore.Normalize(new AppConfig { WindowOpacity = 60 }).WindowOpacity == 60);
+            // 落盘读回：新字段必须真的进 config（用的是反射 + snake_case，不实测不敢说）
+            {
+                string winOpPath = Path.Combine(Path.GetTempPath(),
+                    "lingyun-winop-" + Guid.NewGuid().ToString("N") + ".json");
+                try
+                {
+                    ConfigStore.Save(new AppConfig { WindowOpacity = 55, Opacity = 80 }, winOpPath);
+                    var backOp = ConfigStore.Load(winOpPath);
+                    Check("设置窗口透明度：落盘读回不丢（window_opacity）",
+                        backOp.WindowOpacity == 55 && backOp.Opacity == 80,
+                        $"读回 window_opacity={backOp.WindowOpacity} opacity={backOp.Opacity}");
+                    var raw = File.ReadAllText(winOpPath);
+                    Check("设置窗口透明度：写在 window_opacity 这个键上（不是被写成别的名字）",
+                        raw.Contains("\"window_opacity\""), raw.Length > 200 ? raw[..200] : raw);
+                }
+                finally
+                {
+                    try { File.Delete(winOpPath); } catch { /* 临时文件删不掉不致命 */ }
+                }
+            }
 
             // 液态玻璃（新主题）：恒浅色的应用内材质，透明度滑杆同样作用于它
             var glass = Ui.IslandPalette.For("liquid-glass", 100);

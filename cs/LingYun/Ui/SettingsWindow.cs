@@ -746,7 +746,7 @@ public sealed class SettingsWindow : Window
             default:   // acrylic
                 _fg.Color = C(_dark ? "#f2f4f8" : "#16181c");
                 _sub.Color = C(_dark ? "#b6bcc6" : "#4c5058");
-                _dim.Color = C(_dark ? "#8b919b" : "#6a6f78");
+                _dim.Color = C(_dark ? "#a6acb6" : "#6a6f78");
                 _card.Color = C(_dark ? "#1fffffff" : "#3dffffff");
                 _line.Color = C(_dark ? "#26ffffff" : "#22000000");
                 _accent.Color = C(_dark ? "#60cdff" : "#0a7af0");
