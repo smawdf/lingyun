@@ -25,7 +25,7 @@ internal static class Diag
         "--font-audit", "--dump-text", "--dump-frames", "--self-test", "--diag-all", "--diag-no-frames",
         "--diag-monitor", "--toast-probe", "--toast-test", "--diag-quick", "--spectrum-probe", "--marquee-probe",
         "--wake-probe", "--settings-smoke", "--backdrop-probe", "--acrylic-probe", "--volume-probe",
-        "--audio-probe", "--outside-click-probe",
+        "--audio-probe", "--outside-click-probe", "--frame-probe",
     };
 
     public static bool ShouldRun(string[] args) => args.Any(a => Known.Contains(a));
@@ -223,6 +223,12 @@ internal static class Diag
         {
             try { failures += OutsideClickProbe(w); }
             catch (Exception ex) { w.WriteLine("!! --outside-click-probe 异常: " + ex); failures++; }
+        }
+
+        if (args.Contains("--frame-probe"))
+        {
+            try { failures += FrameProbe(w); }
+            catch (Exception ex) { w.WriteLine("!! --frame-probe 异常: " + ex); failures++; }
         }
 
         if (args.Contains("--marquee-probe"))
@@ -1874,6 +1880,43 @@ internal static class Diag
             Check("音频设备：无效设备立刻失败（不再走沉睡式校验）", msFail <= 200, $"{msFail:0.0}ms");
         }
 
+        w.WriteLine();
+        return failed;
+    }
+
+    // ==================================================================
+    // --frame-probe ：量岛的真实每帧绘制耗时（动画顺不顺的硬指标）
+    // ==================================================================
+    private static int FrameProbe(TextWriter w)
+    {
+        w.WriteLine("========== --frame-probe ==========");
+        w.WriteLine("# 动画流畅度就是「每帧绘制耗时 < 16ms」这一条。这里让岛真跑起来，读它自己统计的");
+        w.WriteLine("# 最近 120 帧平均/最大耗时；两次读数（空闲态 / 展开态）能看出页面内容的影响。");
+        w.WriteLine();
+
+        int failed = 0;
+        void Check(string name, bool ok, string detail = "")
+        {
+            if (ok) w.WriteLine($"PASS  {name}");
+            else { failed++; w.WriteLine($"FAIL  {name}  {detail}"); }
+        }
+
+        var cfg = new AppConfig { Enabled = true, Weekdays = new List<int> { 1, 2, 3, 4, 5, 6, 7 } };
+        using var media = new MediaSessionService();
+        using var island = new Ui.NativeIslandApp(cfg, media);
+        island.Start();
+        Pump(3.0);      // 等统计窗口填满（120 帧 ≈ 2 秒）+ 让设备预热跑完
+        var idle = island.FrameStatsForTest;
+        w.WriteLine($"紧凑态：平均 {idle.Avg:0.00}ms/帧　最大 {idle.Max}ms");
+        Check("动画：紧凑态每帧耗时 < 16ms（能跑满 60fps）", idle.Avg < 16, $"{idle.Avg:0.00}ms");
+
+        island.ForceMode("expanded");
+        Pump(0.6);
+        island.ForcePage(Ui.NativeIslandApp.QuickPageIndex);   // 内容最多的一页
+        Pump(3.0);
+        var expanded = island.FrameStatsForTest;
+        w.WriteLine($"展开态（快捷页，含音量/设备）：平均 {expanded.Avg:0.00}ms/帧　最大 {expanded.Max}ms");
+        Check("动画：展开态每帧耗时 < 16ms", expanded.Avg < 16, $"{expanded.Avg:0.00}ms");
         w.WriteLine();
         return failed;
     }

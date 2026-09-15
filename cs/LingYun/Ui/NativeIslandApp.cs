@@ -638,11 +638,13 @@ public sealed class NativeIslandApp : IDisposable
             }
 
             // 音频设备名要在用户点开「快捷」页**之前**就备好：读名字实测 ~224ms，
-            // 卡在那次点击上就是"点击快捷会卡一下"。所以启动 2 秒后（岛已经显示出来了）预热一次。
+            // 卡在那次点击上就是"点击快捷会卡一下"。启动 2 秒后预热一次，
+            // 但**必须避开变形动画**——这 224ms 落在动画中间就是一帧明显的卡顿。
             if (!_devWarmed)
             {
                 if (_startedAt == 0) _startedAt = Environment.TickCount64;
-                else if (Environment.TickCount64 - _startedAt > 2000)
+                else if (Environment.TickCount64 - _startedAt > 2000
+                         && _morphT >= 1 && _mode == "compact")
                 {
                     _devWarmed = true;
                     RefreshDeviceLists(force: true);
@@ -650,8 +652,21 @@ public sealed class NativeIslandApp : IDisposable
             }
             RefreshOutsideClickCache();   // 更新"点岛外收起"的缓存；消费钩子线程置的待办
             PollDeviceSwitch();   // 设备切换的回读校验：非阻塞，每帧只做 1~2 次 COM 读
+
+            // 帧时间必须用**高精度计时器**量：Environment.TickCount64 的粒度约 15.6ms，
+            // 量出来只会是 0/15/31，根本看不出真实开销。
+            long frameStart = System.Diagnostics.Stopwatch.GetTimestamp();
             RenderFrame();
-            Thread.Sleep(16);
+            double elapsedMs = (System.Diagnostics.Stopwatch.GetTimestamp() - frameStart) * 1000.0
+                               / System.Diagnostics.Stopwatch.Frequency;
+            _frameSum += elapsedMs;
+            _frameMax = Math.Max(_frameMax, (long)elapsedMs);
+            if (++_frameCount >= 120) { _frameAvg = _frameSum / _frameCount; _frameSum = 0; _frameCount = 0; }
+
+            // 帧节奏按"本帧已用了多少"来补睡，而不是固定 Sleep(16)：
+            // 固定睡 16 会让实际间隔变成 16+绘制时间（抖动大，看着就是"不够顺"）。
+            double waitMs = FrameMs - elapsedMs;
+            if (waitMs > 1) Thread.Sleep((int)waitMs);
         }
     }
 
@@ -4642,6 +4657,17 @@ public sealed class NativeIslandApp : IDisposable
         long s = Math.Max(0, ms / 1000);
         return $"{s / 60:00}:{s % 60:00}";
     }
+
+    /// <summary>目标帧间隔（毫秒）。动画顺不顺主要看它有没有被绘制耗时顶掉。</summary>
+    private const int FrameMs = 16;
+
+    private double _frameSum;
+    private long _frameMax;
+    private double _frameAvg;
+    private int _frameCount;
+
+    /// <summary>诊断用：最近 120 帧的平均/最大绘制耗时（毫秒）。</summary>
+    internal (double Avg, double Max) FrameStatsForTest => (_frameAvg, _frameMax);
 
     /// <summary>诊断用：当前形态（compact / expanded / alert）。**只读字段**，跨线程读也安全。</summary>
     internal string ModeForTest => _mode;
