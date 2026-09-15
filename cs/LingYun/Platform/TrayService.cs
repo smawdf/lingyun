@@ -4,7 +4,10 @@ using System.Windows.Controls;
 
 namespace LingYun.Platform;
 
-/// <summary>托盘：显示 / 暂停计划 / 切换显示器 / 音频频谱 / 歌词 / 开机自启 / 退出。</summary>
+/// <summary>
+/// 托盘：显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 歌词 / 消息通知 / 开机自启 / 退出。
+/// （"浅色主题"已按用户要求移除：深浅在"岛设置 → 外观"里选，托盘里那个是重复入口。）
+/// </summary>
 public sealed class TrayService : IDisposable
 {
     private readonly H.NotifyIcon.TaskbarIcon _icon;
@@ -18,7 +21,6 @@ public sealed class TrayService : IDisposable
         Func<int>? cycleMonitor = null, Func<int>? monitorCount = null,
         Func<bool>? getSpectrum = null, Action<bool>? setSpectrum = null,
         Func<bool>? getLyrics = null, Action<bool>? setLyrics = null,
-        Func<bool>? getLightTheme = null, Action<bool>? setLightTheme = null,
         Action? openSettings = null,
         Func<bool>? getToast = null, Action<bool>? setToast = null)
     {
@@ -84,12 +86,6 @@ public sealed class TrayService : IDisposable
             var lyrics = new MenuItem { Header = "显示歌词", IsCheckable = true, IsChecked = getLyrics() };
             lyrics.Click += (_, _) => setLyrics(lyrics.IsChecked);
             menu.Items.Add(lyrics);
-        }
-        if (getLightTheme is not null && setLightTheme is not null)
-        {
-            var light = new MenuItem { Header = "浅色主题", IsCheckable = true, IsChecked = getLightTheme() };
-            light.Click += (_, _) => setLightTheme(light.IsChecked);
-            menu.Items.Add(light);
         }
         // 系统通知：勾选即刻生效；关掉时岛上正在显示的这条会立刻撤下
         if (getToast is not null && setToast is not null)

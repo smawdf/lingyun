@@ -637,6 +637,17 @@ public sealed class NativeIslandApp : IDisposable
                 _islandH = _fromH + (_toH - _fromH) * e;
             }
 
+            // 音频设备名要在用户点开「快捷」页**之前**就备好：读名字实测 ~224ms，
+            // 卡在那次点击上就是"点击快捷会卡一下"。所以启动 2 秒后（岛已经显示出来了）预热一次。
+            if (!_devWarmed)
+            {
+                if (_startedAt == 0) _startedAt = Environment.TickCount64;
+                else if (Environment.TickCount64 - _startedAt > 2000)
+                {
+                    _devWarmed = true;
+                    RefreshDeviceLists(force: true);
+                }
+            }
             RefreshOutsideClickCache();   // 更新"点岛外收起"的缓存；消费钩子线程置的待办
             PollDeviceSwitch();   // 设备切换的回读校验：非阻塞，每帧只做 1~2 次 COM 读
             RenderFrame();
@@ -744,6 +755,9 @@ public sealed class NativeIslandApp : IDisposable
     private long _devReadAt;
     /// <summary>上次读到设备名的时间：读名字很贵（~224ms），10 秒内复用缓存。</summary>
     private long _devListAt;
+    /// <summary>启动后预热过设备缓存没有（预热是为了别把 224ms 卡在"点快捷页"那一瞬间）。</summary>
+    private bool _devWarmed;
+    private long _startedAt;
     /// <summary>等待回读校验的设备切换。换设备不是瞬时的，但**绝不能在渲染线程上 sleep**。</summary>
     private int _devSwitchWhich;
     private string _devSwitchId = "";

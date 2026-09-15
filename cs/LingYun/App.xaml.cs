@@ -150,13 +150,6 @@ public partial class App : Application
                 _island.LyricsEnabled = on;
                 SaveCfg();
             },
-            getLightTheme: () => _island?.LightTheme ?? false,
-            setLightTheme: on =>
-            {
-                if (_island is null) return;
-                _island.LightTheme = on;
-                SaveCfg();
-            },
             getToast: () => _island?.ToastEnabled ?? true,
             setToast: on =>
             {
