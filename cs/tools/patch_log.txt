@@ -1,6 +1,0 @@
-cs/LingYun/Config/AppConfig.cs	base_theme	OK
-cs/LingYun/Config/AppConfig.cs	normalize	OK
-cs/LingYun/Platform/WindowMaterial.cs	consts	OK
-cs/LingYun/Platform/WindowMaterial.cs	resolve	OK
-cs/LingYun/Platform/WindowMaterial.cs	tints	OK
-cs/LingYun/Platform/WindowMaterial.cs	radius+region	OK

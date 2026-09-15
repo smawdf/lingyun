@@ -19,7 +19,7 @@
 | 在线歌词 | `Services/LyricsService.cs` | LRCLIB 同步歌词（LRC 解析 + 按播放位置取句）；离线/查不到静默留空 |
 | 单实例 + 命名管道唤出 | `Platform/SingleInstance.cs` | 含 `WindowFocus`（跳源窗口） |
 | 开机自启 | `Platform/AutoStart.cs` | HKCU Run |
-| 托盘 | `Platform/TrayService.cs` | 显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 显示歌词 / 浅色主题 / 开机自启 / 退出 |
+| 托盘 | `Platform/TrayService.cs` | 显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 显示歌词 / 消息通知 / 开机自启 / 退出（「浅色主题」已按用户要求移除） |
 | 设置窗口控件长相 | `Ui/SettingsWindow.cs`（模板部分） | 药丸单选 / 开关 / 扁平按钮都用自定义 ControlTemplate，**去掉 WPF 默认模板的 Aero 悬停蓝**；经典档显式交回系统默认模板；标题栏必须有 `Transparent` 背景（`null` 不参与命中测试 → 拖不动，自测用 `InputHitTest` 钉住） |
 | 设置窗口材质 | `Platform/WindowMaterial.cs` | 分层窗（`AllowsTransparency`，四角真透明无黑框）；材质由 `theme` 推导（`SettingsWindow.MaterialFor`）：**亚克力**走 accent 系统模糊（DWM 合成、移动零延迟），**液态玻璃**与岛同款清晰透明；色调只画一次（亚克力交给 DWM、玻璃由 WPF 画并跟随透明度）；圆角只有亚克力裁窗口区域（`NeedsRegion`），玻璃由 Border 自绘避免锯齿弧 |
 | 岛设置（主页式） | `Ui/SettingsWindow.cs` | 左侧五个分区（外观 / 位置与大小 / 显示内容 / 歌词 / 关于）+ 右侧内容，820×580 固定尺寸；含界面材质三档、岛主题四选一、背景透明度（滑杆 + 三档预设）、胶囊/展开缩放、位置、显示器切换、组合模式与模块、网速、通知、自动隐藏、歌词（卡拉OK/延迟）、自启、诊断入口；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
@@ -43,6 +43,8 @@
 - 组合模式（默认关闭）下胶囊同屏显示 时间 + 硬件 + 媒体，宽度按内容自动伸缩；
   三个「定宽槽」（时钟按 `88:88`、百分比按 `100%`、网速按 `999.9 MB/s`）保证倒计时/数字跳动时宽度不抖；
   宽度夹在 220–900，内容比 220 窄时（如关掉时间只留硬件 + 网速）模块整体居中，网速行也在槽内居中；
+- 「快捷」页底部常驻**音频区**：主音量（点/拖）+ 静音 + 输出/输入两行当前设备，点一行展开设备列表
+  （点一项即切默认设备；`Platform/GlobalClickWatcher.cs` 的鼠标钩子另管"点岛外收起"）；
 - 「快捷」页 3 列网格：浏览器 / 命令行 / **自定义程序（最多 3 个）** 单击即执行；
   睡眠 / 重启 / 关机带红环预警，**必须按住 0.9 秒**（红色进度弧走满）且松手时指针仍在按钮上才触发，
   长按中指针滑出按钮即取消。资源管理器 / 设置 / 任务管理器三个动作已被移除。
@@ -90,6 +92,12 @@ lingyun.exe --outside-click-probe # 真机验证「点岛外桌面空白收起�
 lingyun.exe --volume-probe       # 真机验证音量链路：岛上读写回读一致、静音可切、测完还原用户音量
 lingyun.exe --acrylic-probe      # 真机验证亚克力是"活的"：换亮/暗两块桌面背景，窗口内亮度必须跟着变（死色/黑屏会被抓出来）
 lingyun.exe --settings-smoke 8 glass   # 起设置窗口停留 8 秒（可选材质 acrylic|glass|classic），供真机截图核对
+lingyun.exe --frame-probe         # 岛的真实每帧绘制耗时与帧间隔（动画流畅度的硬指标）
+lingyun.exe --toast-shrink-probe  # 通知撑宽岛后，撤下通知必须回缩（用户报过的 bug）
+lingyun.exe --volume-probe        # 音量链路：岛上读写回读一致、静音可切、测完还原用户音量
+lingyun.exe --audio-probe         # 音频设备：枚举 + 切默认设备（未公开 IPolicyConfig）+ 各步耗时
+lingyun.exe --acrylic-probe       # 亚克力是「活的」：换亮/暗背景，窗口内亮度必须跟着变
+lingyun.exe --outside-click-probe # 点岛外桌面空白收起面板（合成一次真实点击验证钩子装上了）
 lingyun.exe --spectrum-probe 5   # 音频链路自检：频谱捕获峰值 + SMTC 会话状态 + 音量设备 + 天气定位来源
 lingyun.exe --marquee-probe      # 跑马灯运动验证（两次渲染比较标题带重心）
 lingyun.exe --toast-probe        # 通知权限 / 高水位 Id / 当前通知（AUMID、标题）
