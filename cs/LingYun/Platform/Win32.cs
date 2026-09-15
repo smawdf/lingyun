@@ -291,6 +291,24 @@ public static partial class Native
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CloseHandle(IntPtr hObject);
 
+    // ---- 系统"动画开关"：用户在设置里关掉动画/减少动效时，我们不该硬放动效 ----
+
+    private const uint SPI_GETCLIENTAREAANIMATION = 0x1042;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref int pvParam, uint fWinIni);
+
+    /// <summary>系统是否允许播放动画（读 SPI_GETCLIENTAREAANIMATION；读不到就当允许）。</summary>
+    public static bool AnimationsEnabled()
+    {
+        try
+        {
+            int on = 1;
+            return !SystemParametersInfo(SPI_GETCLIENTAREAANIMATION, 0, ref on, 0) || on != 0;
+        }
+        catch { return true; }
+    }
+
     /// <summary>读窗口样式位（诊断用：确认窗口到底是不是分层窗）。</summary>
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);

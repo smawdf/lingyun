@@ -4757,25 +4757,28 @@ public sealed class NativeIslandApp : IDisposable
     /// <summary>诊断用：当前形态（compact / expanded / alert）。**只读字段**，跨线程读也安全。</summary>
     internal string ModeForTest => _mode;
 
-    // ---- 天气动效（只画在当前天气卡里）----
-    // 粒子用**归一化坐标**（0..1），画的时候才映射到卡片矩形：换缩放/换卡片尺寸都不用重新播种。
-    // 数组一次性分配好，每帧只改数值 —— 前面量帧耗时看到 GC 是掉帧嫌疑，动效绝不能每帧 new 对象。
-    private const int FxMax = 24;
-    private readonly float[] _fxX = new float[FxMax];
-    private readonly float[] _fxY = new float[FxMax];
-    private readonly float[] _fxSp = new float[FxMax];
-    private readonly float[] _fxPh = new float[FxMax];
+    // ---- 天气图标 + 分层动效（只画在当前天气卡里）----
+    //
+    // 为什么是"矢量图标 + 相位驱动"，而不是粒子系统（这是查了业界做法之后改的）：
+    //  1. 成熟实现（Dark Sky 的 Skycons、Meteocons）都是**少量图元、各自极小的位移**：
+    //     太阳光线旋转、云上下浮 3%、雨滴按 1s 错相下落、雪花一边落一边摆。没有谁在
+    //     图标大小的卡里跑整屏粒子——那样只会又吵又飘。
+    //  2. 动画写成**时间的纯函数** phase = (elapsed % 周期)/周期，而不是有状态的粒子：
+    //     不累积漂移、与帧率无关、切天气时不用重置。
+    //  3. 图元路径在**单位坐标里建一次**（100×100），画的时候只做 canvas 变换缩放平移 ——
+    //     每帧零分配（前面量帧耗时看到 GC 是掉帧嫌疑）。
+    //  4. 系统关了动画（减少动效）时用固定相位出一张静态姿态，而不是硬放。
+
+    private const float FxUnit = 100f;
+    private static SKPath? _fxSun, _fxSunRays, _fxCloud, _fxDrop, _fxFlake, _fxBolt, _fxFogLine;
     private readonly SKPaint _fxPaint = new();
-    /// <summary>晴天光晕：**只建一次**的径向渐变位图，之后每帧只缩放绘制。
-    /// 用同心圆叠会出硬边环带（第一版就是这样，出图一看像靶环）；每帧建 shader 又是每帧分配。</summary>
-    private SKBitmap? _sunGlow;
-    private SKColor _sunGlowAccent;
-    private uint _fxSeed = 0x9E3779B9;
+    private readonly SKPaint _fxStroke = new();
+    private readonly System.Diagnostics.Stopwatch _fxClock = System.Diagnostics.Stopwatch.StartNew();
     private string _weatherFx = "";
 
     /// <summary>
-    /// 天气码 → 动效类型（纯函数，自测钉住）。WMO code：
-    /// 0/1 晴、2/3 多云、45/48 雾、51-57/61-67/80-82 雨、71-77/85/86 雪、95-99 雷雨。
+    /// 天气码 → 图标/动效类型（纯函数，自测钉住）。WMO code：
+    /// 0/1 晴、2/3 多云、45/48 雾、51-67/80-82 雨、71-77/85/86 雪、95-99 雷雨。
     /// </summary>
     internal static string WeatherFxFor(double code) => code switch
     {
@@ -4790,7 +4793,7 @@ public sealed class NativeIslandApp : IDisposable
         _ => "",
     };
 
-    /// <summary>当前该放哪种动效（天气没到或拿不到码就什么都不画）。</summary>
+    /// <summary>当前该放哪种天气图标（天气没到或拿不到码就什么都不画）。</summary>
     private string WeatherFxKind()
     {
         if (_weather is not { Ok: true } w) return "";
@@ -4799,152 +4802,213 @@ public sealed class NativeIslandApp : IDisposable
         return code is { } c ? WeatherFxFor(c) : "";
     }
 
-    private int FxCount() => _weatherFx is "sun" or "cloud" or "fog" ? 6 : 20;
-
-    private float NextFx()
-    {
-        _fxSeed = _fxSeed * 1664525u + 1013904223u;
-        return (_fxSeed >> 8) / 16777216f;          // 0..1
-    }
-
-    /// <summary>换天气类型时重新播种（每帧核对一次，只在真的变了才动）。</summary>
-    private void SyncWeatherFx()
-    {
-        string kind = WeatherFxKind();
-        if (kind == _weatherFx) return;
-        _weatherFx = kind;
-        for (int i = 0; i < FxMax; i++)
-        {
-            _fxX[i] = NextFx();
-            _fxY[i] = NextFx();
-            _fxSp[i] = 0.06f + NextFx() * 0.22f;    // 归一化速度：每秒下落 6%~28% 卡高
-            _fxPh[i] = NextFx() * 6.283f;
-        }
-    }
-
-    /// <summary>晴天光晕位图（径向渐变，只建一次；调色板变了才重建）。</summary>
-    private SKBitmap SunGlow(SKColor accent)
-    {
-        if (_sunGlow is not null && _sunGlowAccent == accent) return _sunGlow;
-        _sunGlow?.Dispose();
-        const int N = 128;
-        _sunGlow = new SKBitmap(new SKImageInfo(N, N, SKColorType.Bgra8888, SKAlphaType.Premul));
-        using (var c = new SKCanvas(_sunGlow))
-        {
-            c.Clear(SKColors.Transparent);
-            using var shader = SKShader.CreateRadialGradient(
-                new SKPoint(N / 2f, N / 2f), N / 2f,
-                new[] { accent.WithAlpha(170), accent.WithAlpha(60), accent.WithAlpha(0) },
-                new[] { 0f, 0.45f, 1f }, SKShaderTileMode.Clamp);
-            using var p = new SKPaint { Shader = shader, IsAntialias = true };
-            c.DrawCircle(N / 2f, N / 2f, N / 2f, p);
-        }
-        _sunGlowAccent = accent;
-        return _sunGlow;
-    }
-
-    /// <summary>按帧推进粒子（在岛线程的帧循环里调，dt 是秒）。</summary>
+    /// <summary>秒表推进（在帧循环里调；只为让动画走时间轴，不存任何状态）。</summary>
     private void StepWeatherFx(double dt)
     {
-        SyncWeatherFx();
-        if (_weatherFx.Length == 0 || dt <= 0) return;
-        int n = FxCount();
-        for (int i = 0; i < n; i++)
+        _ = dt;
+        _weatherFx = WeatherFxKind();   // 类型只在天气变化时真正改变
+    }
+
+    /// <summary>当前相位（0..1）。系统关了动画就固定成一个代表性姿态。</summary>
+    private double FxPhase(double periodSec, double offset = 0)
+        => Native.AnimationsEnabled()
+            ? (_fxClock.Elapsed.TotalSeconds / periodSec + offset) % 1.0
+            : (0.35 + offset) % 1.0;
+
+    private static byte FxMix(byte a, byte b, double t) => (byte)Math.Round(a + (b - a) * t);
+
+    /// <summary>淡入淡出包络：前 15% 渐显、后 15% 渐隐（抄 Meteocons 的 keyTimes）。</summary>
+    private static double FxFade(double phase)
+        => phase < 0.15 ? phase / 0.15 : phase > 0.85 ? (1 - phase) / 0.15 : 1;
+
+    private static double FxEaseIn(double t) => t * t;                       // 重力：加速下落
+    private static double FxEaseInOut(double t) => t < 0.5 ? 2 * t * t : 1 - Math.Pow(-2 * t + 2, 2) / 2;
+
+    private static SKPath FxSun()
+    {
+        if (_fxSun is null) { _fxSun = new SKPath(); _fxSun.AddCircle(50, 50, 22); }
+        return _fxSun;
+    }
+
+    private static SKPath FxSunRays()
+    {
+        if (_fxSunRays is not null) return _fxSunRays;
+        var p = new SKPath();
+        for (int i = 0; i < 8; i++)
         {
-            _fxY[i] += (float)(_fxSp[i] * dt);
-            if (_weatherFx is "snow" or "cloud" or "fog") _fxPh[i] += (float)(dt * 1.3);
-            if (_fxY[i] > 1.04f)
-            {
-                _fxY[i] -= 1.08f;
-                _fxX[i] = NextFx();
-            }
+            double a = i * Math.PI / 4;
+            float c = (float)Math.Cos(a), s2 = (float)Math.Sin(a);
+            p.MoveTo(50 + c * 30, 50 + s2 * 30);
+            p.LineTo(50 + c * 42, 50 + s2 * 42);
         }
+        return _fxSunRays = p;
+    }
+
+    private static SKPath FxCloud()
+    {
+        if (_fxCloud is not null) return _fxCloud;
+        var p = new SKPath();
+        p.AddCircle(34, 60, 15);
+        p.AddCircle(52, 52, 19);
+        p.AddCircle(70, 60, 13);
+        p.AddRoundRect(new SKRect(20, 58, 82, 76), 9, 9);
+        return _fxCloud = p;
+    }
+
+    private static SKPath FxDrop()
+    {
+        if (_fxDrop is null) { _fxDrop = new SKPath(); _fxDrop.MoveTo(0, 0); _fxDrop.LineTo(-3, 15); }
+        return _fxDrop;
+    }
+
+    private static SKPath FxFlake()
+    {
+        if (_fxFlake is not null) return _fxFlake;
+        var p = new SKPath();
+        for (int i = 0; i < 3; i++)
+        {
+            double a = i * Math.PI / 3;
+            float c = (float)Math.Cos(a) * 7, s2 = (float)Math.Sin(a) * 7;
+            p.MoveTo(-c, -s2);
+            p.LineTo(c, s2);
+        }
+        return _fxFlake = p;
+    }
+
+    private static SKPath FxBolt()
+    {
+        if (_fxBolt is null)
+        {
+            var p = new SKPath();
+            p.MoveTo(56, 44); p.LineTo(43, 64); p.LineTo(52, 64);
+            p.LineTo(44, 82); p.LineTo(62, 58); p.LineTo(52, 58); p.Close();
+            _fxBolt = p;
+        }
+        return _fxBolt;
+    }
+
+    /// <summary>雾/云带：一条圆角短横线，靠 canvas 平移错开画多条。</summary>
+    private static SKPath FxFogLine()
+    {
+        if (_fxFogLine is null)
+        {
+            _fxFogLine = new SKPath();
+            _fxFogLine.AddRoundRect(new SKRect(18, -3, 82, 3), 3, 3);
+        }
+        return _fxFogLine;
     }
 
     /// <summary>
-    /// 把动效画在当前天气卡的**背景层**（文字之前），所以它不会压住任何字。
-    /// 全部用同一个 _fxPaint 改属性复用，不 new 对象。
+    /// 画天气图标（含分层动效）。位置在卡片右上角，尺寸随卡片缩放。
+    /// 全部用单位坐标的缓存路径 + canvas 变换，每帧零分配。
     /// </summary>
     private void DrawWeatherFx(SKCanvas canvas, SKRect card, float s)
     {
-        // 绘制前也同步一次：离屏出图（诊断帧）没有帧循环，不在这里同步就什么都画不出来。
-        // 幂等且廉价（只在天气类型真的变了才重新播种）。
-        SyncWeatherFx();
+        _weatherFx = WeatherFxKind();
         if (_weatherFx.Length == 0) return;
-        int n = FxCount();
-        float w = card.Width, h = card.Height;
+
+        float size = 58 * s;
+        float ox = card.Right - size - 12 * s;
+        float oy = card.Top + 12 * s;
         var ac = PageAccent(2);
+        _fxPaint.IsAntialias = true;
+        _fxStroke.IsAntialias = true;
+        _fxStroke.Style = SKPaintStyle.Stroke;
+        _fxStroke.StrokeCap = SKStrokeCap.Round;
+        _fxStroke.StrokeWidth = 3.6f;
+
+        canvas.Save();
+        canvas.Translate(ox, oy);
+        canvas.Scale(size / FxUnit);
         switch (_weatherFx)
         {
+            case "sun":
+            {
+                // 太阳：光线 20 秒一圈（慢到像环境光，不抢眼），圆盘不动
+                _fxPaint.Color = ac;
+                canvas.DrawPath(FxSun(), _fxPaint);
+                _fxStroke.Color = ac;
+                canvas.Save();
+                canvas.RotateDegrees((float)(FxPhase(20) * 360), 50, 50);
+                canvas.DrawPath(FxSunRays(), _fxStroke);
+                canvas.Restore();
+                break;
+            }
+            case "cloud":
+            {
+                // 多云：云整体上下浮 ±3%，3 秒一轮（ease-in-out）
+                double bob = FxEaseInOut(FxPhase(3)) * 6 - 3;
+                _fxPaint.Color = Pal.Sub;
+                canvas.Translate(0, (float)bob);
+                canvas.DrawPath(FxCloud(), _fxPaint);
+                break;
+            }
             case "rain":
             case "thunder":
             {
-                // 细斜线：偏斜 12° 更符合"雨是被风吹斜的"
-                _fxPaint.Style = SKPaintStyle.Stroke;
-                _fxPaint.StrokeWidth = 1.2f * s;
-                _fxPaint.StrokeCap = SKStrokeCap.Round;
-                for (int i = 0; i < n; i++)
+                double bob = FxEaseInOut(FxPhase(3)) * 6 - 3;
+                float dropTop = 74;
+                for (int i = 0; i < 4; i++)
                 {
-                    float x = card.Left + _fxX[i] * w, y = card.Top + _fxY[i] * h;
-                    float len = (7 + _fxSp[i] * 26) * s;
-                    _fxPaint.Color = BackgroundAlpha(ac, 46);
-                    canvas.DrawLine(x, y, x - len * 0.22f, y + len, _fxPaint);
+                    // 4 滴共用一条动画，只错相位（抄 Meteocons：一个动画 + 多实例偏移）
+                    double ph = FxPhase(1.1, i * 0.25);
+                    canvas.Save();
+                    canvas.Translate(30 + i * 13, dropTop + (float)(FxEaseIn(ph) * 22));
+                    _fxStroke.Color = new SKColor(ac.Red, ac.Green, ac.Blue, (byte)(220 * FxFade(ph)));
+                    _fxStroke.StrokeWidth = 3.2f;
+                    canvas.DrawPath(FxDrop(), _fxStroke);
+                    canvas.Restore();
                 }
+                _fxPaint.Color = Pal.Sub;
+                canvas.Translate(0, (float)bob);
+                canvas.DrawPath(FxCloud(), _fxPaint);
                 if (_weatherFx == "thunder")
                 {
-                    // 雷：每 3 秒左右闪一下（用粒子相位当计时，不引入新状态）
-                    double t = DateTime.Now.TimeOfDay.TotalSeconds % 3.0;
-                    if (t < 0.14)
+                    // 雷：闪电形状不动，只按不规则包络闪（Meteocons 的 2 秒循环）
+                    double ph = FxPhase(2.0);
+                    double flash = ph is > 0.33 and < 0.38 or > 0.42 and < 0.46 or > 0.50 and < 0.54 ? 1 : 0;
+                    if (flash > 0)
                     {
-                        _fxPaint.Style = SKPaintStyle.Fill;
-                        _fxPaint.Color = new SKColor(255, 255, 255, (byte)(90 * (1 - t / 0.14)));
-                        canvas.DrawRoundRect(card, 14 * s, 14 * s, _fxPaint);
+                        _fxPaint.Color = Pal.Warn;
+                        canvas.DrawPath(FxBolt(), _fxPaint);
                     }
                 }
                 break;
             }
             case "snow":
             {
-                _fxPaint.Style = SKPaintStyle.Fill;
-                for (int i = 0; i < n; i++)
+                for (int i = 0; i < 4; i++)
                 {
-                    float sway = (float)Math.Sin(_fxPh[i]) * 5 * s;
-                    float x = card.Left + _fxX[i] * w + sway, y = card.Top + _fxY[i] * h;
-                    _fxPaint.Color = new SKColor(255, 255, 255, (byte)(60 + _fxSp[i] * 260));
-                    canvas.DrawCircle(x, y, (0.9f + _fxSp[i] * 3.4f) * s, _fxPaint);
+                    // 雪花：一边落一边左右摆 + 自身缓慢旋转（2.6 秒一轮）
+                    double ph = FxPhase(2.6, i * 0.25);
+                    float sway = (float)Math.Sin(ph * Math.PI * 2 + i) * 9;
+                    canvas.Save();
+                    canvas.Translate(30 + i * 13 + sway, 74 + (float)(FxEaseIn(ph) * 22));
+                    canvas.RotateDegrees((float)(_fxClock.Elapsed.TotalSeconds * 40 + i * 30));
+                    _fxStroke.Color = new SKColor(255, 255, 255, (byte)(230 * FxFade(ph)));
+                    _fxStroke.StrokeWidth = 2.4f;
+                    canvas.DrawPath(FxFlake(), _fxStroke);
+                    canvas.Restore();
                 }
                 break;
             }
-            case "sun":
-            {
-                // 晴：温度数字后面一团缓慢呼吸的光晕（预生成的渐变位图，缩放绘制：平滑且不分配）
-                var glow = SunGlow(ac);
-                double breath = 0.5 + 0.5 * Math.Sin(DateTime.Now.TimeOfDay.TotalSeconds * 1.1);
-                float size = (156 + (float)(breath * 30)) * s;
-                float cx = card.Left + 74 * s, cy = card.Top + 112 * s;
-                _fxPaint.Style = SKPaintStyle.Fill;
-                _fxPaint.Color = SKColors.White.WithAlpha((byte)(150 + breath * 70));
-                canvas.DrawBitmap(glow, new SKRect(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2),
-                    _fxPaint);
-                break;
-            }
             case "fog":
-            case "cloud":
             {
-                // 雾/云：几条横向的柔和色带缓慢漂移
-                _fxPaint.Style = SKPaintStyle.Fill;
-                for (int i = 0; i < n; i++)
+                // 雾：三条横线左右漂 ±3%，各自错相位、ease-in-out
+                for (int i = 0; i < 3; i++)
                 {
-                    float drift = (float)Math.Sin(_fxPh[i]) * 10 * s;
-                    float y = card.Top + (0.12f + i * (0.78f / Math.Max(1, n - 1))) * h;
-                    float bw = (0.5f + _fxSp[i] * 1.6f) * w;
-                    float x = card.Left + _fxX[i] * w - bw / 2 + drift;
-                    _fxPaint.Color = BackgroundAlpha(Pal.Sub, _weatherFx == "fog" ? (byte)26 : (byte)20);
-                    canvas.DrawRoundRect(new SKRect(x, y, x + bw, y + 9 * s), 5 * s, 5 * s, _fxPaint);
+                    double ph = FxEaseInOut(FxPhase(3, i * 0.2));
+                    canvas.Save();
+                    canvas.Translate(0, 40 + i * 12);
+                    canvas.Translate((float)((ph - 0.5) * 12), 0);
+                    _fxPaint.Color = new SKColor(Pal.Sub.Red, Pal.Sub.Green, Pal.Sub.Blue, 150);
+                    canvas.DrawPath(FxFogLine(), _fxPaint);
+                    canvas.Restore();
                 }
                 break;
             }
         }
+        canvas.Restore();
     }
 
     /// <summary>诊断用：岛体当前宽度（像素），用来验收"通知撤下后有没有回缩"。</summary>
@@ -4983,7 +5047,6 @@ public sealed class NativeIslandApp : IDisposable
     public void Dispose()
     {
         if (_waitTimer != IntPtr.Zero) { try { Native.CloseHandle(_waitTimer); } catch { } _waitTimer = IntPtr.Zero; }
-        try { _sunGlow?.Dispose(); } catch { /* 退出路径 */ }
         _outsideClicks.Dispose();
         // 只投递 WM_CLOSE：DIB 与窗口都由岛线程自行释放，避免跨线程释放/绘制竞争
         _host.Dispose();
