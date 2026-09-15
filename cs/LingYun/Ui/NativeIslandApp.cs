@@ -561,6 +561,17 @@ public sealed class NativeIslandApp : IDisposable
 
     private void Loop()
     {
+        // 装钩子：点岛外空白 → 收起。失败（极少见）只意味着少一个便利，不影响其它功能。
+        _outsideClicks.OnClick = (x, y) =>
+        {
+            if (!_cfg.CollapseOnBlank || _mode != "expanded") return false;
+            var (ix, iy, iw, ih) = Island();
+            if (x >= ix && x < ix + iw && y >= iy && y < iy + ih) return false;   // 岛内的点击由窗口自己处理
+            CollapseOnBlank();
+            return true;
+        };
+        _outsideClicks.Install();
+
         // 退出由 WM_CLOSE 置位：窗口在岛线程内自行销毁，避免跨线程 DestroyWindow
         while (!_host.IsClosed)
         {
@@ -635,6 +646,12 @@ public sealed class NativeIslandApp : IDisposable
     private static double OutExpo(double t) => t >= 1 ? 1 : 1 - Math.Pow(2, -10 * t);
 
     /// <summary>点空白处收起面板（受「点空白处收起」开关控制；关掉后只有 ✕ 能收）。</summary>
+    /// <summary>
+    /// 全局鼠标钩子：点**岛外**的桌面空白也收起展开面板（岛自己的窗口收不到外面的点击）。
+    /// 只观察不拦截，也不需要管理员权限；钩子装在岛线程上（有消息循环），回调也在那条线程上跑。
+    /// </summary>
+    private readonly GlobalClickWatcher _outsideClicks = new();
+
     private void CollapseOnBlank()
     {
         if (_cfg.CollapseOnBlank) SetMode("compact");
@@ -4597,8 +4614,12 @@ public sealed class NativeIslandApp : IDisposable
         return $"{s / 60:00}:{s % 60:00}";
     }
 
+    /// <summary>诊断用：当前形态（compact / expanded / alert）。**只读字段**，跨线程读也安全。</summary>
+    internal string ModeForTest => _mode;
+
     public void Dispose()
     {
+        _outsideClicks.Dispose();
         // 只投递 WM_CLOSE：DIB 与窗口都由岛线程自行释放，避免跨线程释放/绘制竞争
         _host.Dispose();
     }

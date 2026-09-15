@@ -25,7 +25,7 @@ internal static class Diag
         "--font-audit", "--dump-text", "--dump-frames", "--self-test", "--diag-all", "--diag-no-frames",
         "--diag-monitor", "--toast-probe", "--toast-test", "--diag-quick", "--spectrum-probe", "--marquee-probe",
         "--wake-probe", "--settings-smoke", "--backdrop-probe", "--acrylic-probe", "--volume-probe",
-        "--audio-probe",
+        "--audio-probe", "--outside-click-probe",
     };
 
     public static bool ShouldRun(string[] args) => args.Any(a => Known.Contains(a));
@@ -217,6 +217,12 @@ internal static class Diag
         {
             try { failures += AudioProbe(w, args); }
             catch (Exception ex) { w.WriteLine("!! --audio-probe 异常: " + ex); failures++; }
+        }
+
+        if (args.Contains("--outside-click-probe"))
+        {
+            try { failures += OutsideClickProbe(w); }
+            catch (Exception ex) { w.WriteLine("!! --outside-click-probe 异常: " + ex); failures++; }
         }
 
         if (args.Contains("--marquee-probe"))
@@ -1867,6 +1873,69 @@ internal static class Diag
             Check("音频设备：切换本身不等待（≤200ms 返回）", msApply is > 0 and <= 200, $"{msApply:0.0}ms");
             Check("音频设备：无效设备立刻失败（不再走沉睡式校验）", msFail <= 200, $"{msFail:0.0}ms");
         }
+
+        w.WriteLine();
+        return failed;
+    }
+
+    // ==================================================================
+    // --outside-click-probe ：真机验证「点岛外桌面空白收起面板」
+    // ==================================================================
+    private static int OutsideClickProbe(TextWriter w)
+    {
+        w.WriteLine("========== --outside-click-probe ==========");
+        w.WriteLine("# 岛自己的窗口收不到落在别处的点击，所以靠 WH_MOUSE_LL 低级鼠标钩子（只观察、不拦截）。");
+        w.WriteLine("# 这里用 SendInput 合成一次真实的鼠标点击，看岛是否真的收起——纯逻辑测试证明不了钩子装上了。");
+        w.WriteLine();
+
+        int failed = 0;
+        void Check(string name, bool ok, string detail = "")
+        {
+            if (ok) w.WriteLine($"PASS  {name}");
+            else { failed++; w.WriteLine($"FAIL  {name}  {detail}"); }
+        }
+
+        var cfg = new AppConfig { CollapseOnBlank = true };
+        using var media = new MediaSessionService();
+        using var island = new Ui.NativeIslandApp(cfg, media);
+        island.Start();
+        Pump(1.0);
+
+        var (ix, iy, iw, ih) = island.ShellRect;
+        w.WriteLine($"岛体矩形 = ({ix},{iy}) {iw}×{ih}");
+        var wa = Displays.WorkAreaOf(cfg.MonitorIndex);
+        int ox = wa.Left + (wa.Right - wa.Left) / 2;
+        int oy = wa.Bottom - 120;            // 远离岛的桌面空白
+        w.WriteLine($"合成点击点 = ({ox},{oy})（岛外）");
+
+        island.ForceMode("expanded");
+        Pump(0.6);
+        w.WriteLine($"点击前形态 = {island.ModeForTest}");
+        Check("点岛外：点击前确实是展开态", island.ModeForTest == "expanded", island.ModeForTest);
+
+        Native.SetCursorPos(ox, oy);
+        Pump(0.2);
+        var inputs = new[]
+        {
+            new Native.INPUT { type = 0, mi = new Native.MOUSEINPUT { dwFlags = 0x0002 } },   // LEFTDOWN
+            new Native.INPUT { type = 0, mi = new Native.MOUSEINPUT { dwFlags = 0x0004 } },   // LEFTUP
+        };
+        uint sent = Native.SendInput((uint)inputs.Length, inputs,
+            System.Runtime.InteropServices.Marshal.SizeOf<Native.INPUT>());
+        w.WriteLine($"SendInput 返回 {sent}（2 = 两个事件都投出去了）");
+        Pump(0.9);
+
+        w.WriteLine($"点击后形态 = {island.ModeForTest}");
+        Check("点岛外桌面空白：面板收起了", island.ModeForTest == "compact", island.ModeForTest);
+
+        // 收起来之后再点一次，不应该出乱子（形态保持在 compact）
+        Native.SetCursorPos(ox, oy - 40);
+        Pump(0.2);
+        Native.SendInput((uint)inputs.Length, inputs,
+            System.Runtime.InteropServices.Marshal.SizeOf<Native.INPUT>());
+        Pump(0.6);
+        Check("点岛外（原本就是收起态）：不产生异常、形态不变",
+            island.ModeForTest == "compact", island.ModeForTest);
 
         w.WriteLine();
         return failed;

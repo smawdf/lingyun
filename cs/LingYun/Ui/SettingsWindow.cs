@@ -630,7 +630,7 @@ public sealed class SettingsWindow : Window
         AddGroupLabel(root, "操作行为");
         card = NewCard(root);
         AddCheck(card, new CheckBox(), "点空白处收起面板",
-            "展开后点面板空白处收起（关掉后只能等自动关闭；页签条空白也算空白）",
+            "展开后点面板空白处收起（点岛外的桌面空白同样收起；关掉后只能等自动关闭；页签条空白也算空白）",
             v => { _cfg.CollapseOnBlank = v; _island.ApplyConfig(); });
         AddCheck(card, new CheckBox(), "闲置自动隐藏",
             "无媒体且鼠标离开 10 秒后收起岛；光标移到屏幕顶部即可恢复",
