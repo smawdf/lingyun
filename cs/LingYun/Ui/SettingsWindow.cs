@@ -302,6 +302,13 @@ public sealed class SettingsWindow : Window
     /// <summary>自测用：标题栏元素（验证"空白处也能命中 → 可拖动"）。</summary>
     internal FrameworkElement TitleBarForTest => _header;
 
+    /// <summary>
+    /// 诊断用：当前材质下的前景/次要/提示三种文字色。
+    /// 让 --acrylic-probe 能算"最亮壁纸下窗口内文字还够不够清楚"——这是把亚克力调透的边界条件。
+    /// </summary>
+    internal (System.Windows.Media.Color Fg, System.Windows.Media.Color Sub, System.Windows.Media.Color Dim)
+        ForegroundsForTest => (_fg.Color, _sub.Color, _dim.Color);
+
     private readonly Grid _header = new() { Margin = new Thickness(22, 16, 16, 8) };
 
     private FrameworkElement BuildTitleBar()

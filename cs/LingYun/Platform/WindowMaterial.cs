@@ -85,7 +85,10 @@ internal static class WindowMaterial
             // 液态玻璃 = 岛上那套半透明材质（不模糊、背后内容直接透出来）；亚克力走系统模糊，色调可薄一些
             // 与岛的液态玻璃主体**同 alpha**（214 = 0xD6）：同一个主题下岛和窗口才是同一块材质
             Glass => dark ? unchecked((int)0xD6121418) : unchecked((int)0xD6FFFFFF),
-            _ => dark ? unchecked((int)0x861A1B20) : unchecked((int)0x7AF2F4F8),   // acrylic
+            // 亚克力色调浓度：原来 0x86/0x7A。实测最亮壁纸下窗口底色 RGB(43,52,64)、对壁纸明暗的跟随只有 5%，
+            // 偏暗偏实；而文字对比度还有余量（主 11.4:1 / 次 6.6:1 / 提示 4.0:1），
+            // 所以调薄一档，让它真的像"微透"的亚克力。--acrylic-probe 用同一套判据复核。
+            _ => dark ? unchecked((int)0x701A1B20) : unchecked((int)0x6AF2F4F8),   // acrylic
         };
 
     /// <summary>面板圆角（DIP）：玻璃大圆角（圆角由我们自己画），亚克力跟 DWM 的观感走。</summary>

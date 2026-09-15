@@ -1539,7 +1539,7 @@ internal static class Diag
             return failed;
         }
 
-        (double D, double W, double WStruct, double DStruct) Measure(int tx, int ty)
+        (double D, double W, double WStruct, double DStruct, Services.BackdropSample Panel) Measure(int tx, int ty)
         {
             win.Left = tx + block / 2.0 - (sx + sw / 2.0);
             win.Top = ty + block / 2.0 - (sy + sh / 2.0);
@@ -1552,11 +1552,11 @@ internal static class Diag
             var wv = sampler.Sample(
                 (int)(win.Left + sx), (int)(win.Top + sy), sw, sh) ?? Services.BackdropSample.Unknown;
             return (d.Luminance, wv.Luminance,
-                wv.BrightestCell - wv.Luminance, d.BrightestCell - d.Luminance);
+                wv.BrightestCell - wv.Luminance, d.BrightestCell - d.Luminance, wv);
         }
 
-        var (dBright, wBright, wStructB, dStructB) = Measure(bx, by);
-        var (dDark, wDark, wStructD, dStructD) = Measure(dx, dy);
+        var (dBright, wBright, wStructB, dStructB, panelBright) = Measure(bx, by);
+        var (dDark, wDark, wStructD, dStructD, _) = Measure(dx, dy);
         w.WriteLine($"压在**亮**背景上：桌面亮度 {dBright:0.000} → 窗口内 {wBright:0.000}"
                     + $"（结构 {dStructB:0.000} → {wStructB:0.000}）");
         w.WriteLine($"压在**暗**背景上：桌面亮度 {dDark:0.000} → 窗口内 {wDark:0.000}"
@@ -1568,7 +1568,24 @@ internal static class Diag
         double response = Math.Abs(winDelta);
         double blurRatio = dStructB > 0.002 ? wStructB / dStructB : double.NaN;
         w.WriteLine($"窗口内随背景的变化 = {winDelta:+0.000;-0.000;0.000}（桌面变化 {deskDelta:+0.000;-0.000;0.000}）"
-                    + $"　结构保留比 = {blurRatio:0.00}（模糊会把它压小）");
+                    + $"　跟随比例 = {(Math.Abs(deskDelta) > 0.001 ? response / Math.Abs(deskDelta) : 0):P0}"
+                    + $"　结构保留比 = {blurRatio:0.00}");
+        w.WriteLine("# 注意：跟随比例是**下界**——DWM 的模糊半径远大于这里采的方块，");
+        w.WriteLine("#   一块高对比的小背景被糊进大片邻域后均值本就会被拉平，所以它不能当成透过率读数；");
+        w.WriteLine("#   真正的判据是「换背景窗口内必须跟着变」，以及下面这条最亮壁纸下的对比度。");
+
+        // 可读性：把文字色压在最亮壁纸下的窗口底色上算对比度——这是"能调多透"的边界
+        var panelColor = new SKColor(panelBright.R, panelBright.G, panelBright.B);
+        var (fg, sub, dim) = win.ForegroundsForTest;
+        double cFg = Ui.IslandPalette.Contrast(
+            new SKColor(fg.R, fg.G, fg.B), panelColor);
+        double cSub = Ui.IslandPalette.Contrast(
+            new SKColor(sub.R, sub.G, sub.B), panelColor);
+        double cDim = Ui.IslandPalette.Contrast(
+            new SKColor(dim.R, dim.G, dim.B), panelColor);
+        w.WriteLine($"最亮壁纸下的窗口底色 = RGB({panelBright.R},{panelBright.G},{panelBright.B})"
+                    + $"　文字对比度：主 {cFg:0.0}:1　次 {cSub:0.0}:1　提示 {cDim:0.0}:1");
+        w.WriteLine();
 
         Check("亚克力：窗口内跟着背后桌面的明暗变（材质是活的，不是一层死色）",
             response >= 0.004, $"response={response:0.000}（低于 0.004 说明材质没画出来或是死色）");
@@ -1577,6 +1594,10 @@ internal static class Diag
             $"win={winDelta:0.000} desk={deskDelta:0.000}");
         Check("亚克力：背景结构被抹平（确实有模糊，不是直接透出原始桌面）",
             double.IsNaN(blurRatio) || blurRatio < 0.8, $"ratio={blurRatio:0.00}");
+        Check("亚克力：最亮壁纸下主文字仍够清楚（对比度 ≥ 4.5）",
+            cFg >= 4.5, $"{cFg:0.0}:1");
+        Check("亚克力：最亮壁纸下提示文字不至于看不清（对比度 ≥ 3.0）",
+            cDim >= 3.0, $"{cDim:0.0}:1");
         win.Close();
         w.WriteLine();
         return failed;
