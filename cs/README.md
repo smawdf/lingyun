@@ -19,7 +19,7 @@
 | 开机自启 | `Platform/AutoStart.cs` | HKCU Run |
 | 托盘 | `Platform/TrayService.cs` | 显示 / 暂停计划 / 岛设置 / 切换显示器 / 音频频谱 / 显示歌词 / 浅色主题 / 开机自启 / 退出 |
 | 设置窗口控件长相 | `Ui/SettingsWindow.cs`（模板部分） | 药丸单选 / 开关 / 扁平按钮都用自定义 ControlTemplate，**去掉 WPF 默认模板的 Aero 悬停蓝**；经典档显式交回系统默认模板；标题栏必须有 `Transparent` 背景（`null` 不参与命中测试 → 拖不动，自测用 `InputHitTest` 钉住） |
-| 设置窗口材质 | `Platform/WindowMaterial.cs` + `Platform/LiquidGlassEdgeRenderer.cs` | 分层窗（`AllowsTransparency`，四角真透明无黑框）；材质由 `theme` 推导（`SettingsWindow.MaterialFor`）：**亚克力**走 accent 系统模糊（DWM 合成、移动零延迟），**液态玻璃**与岛同款清晰透明，并在圆角内侧约 12px 环带做屏幕采样折射（采样点沿法线 3→26px 外推，把窗外更宽的一条背景压进窄环带；RGB 通道错开 ±2.4px 色散；另加一圈相对面板色调的棱边，纯色壁纸上也看得见）；中心不覆盖控件，100ms 刷新一次，抓屏失败回退透明色调；圆角只有亚克力裁窗口区域，玻璃由 Border 自绘避免锯齿弧 |
+| 设置窗口材质 | `Platform/WindowMaterial.cs` + `Platform/LiquidGlassEdgeRenderer.cs` | 分层窗（`AllowsTransparency`，四角真透明无黑框）；材质由 `theme` 推导（`SettingsWindow.MaterialFor`）：**亚克力**走 accent 系统模糊（DWM 合成、移动零延迟），**液态玻璃**是**一整块**面板图——材质色铺满整块，圆角内侧约 12px 环带把窗外背景沿法线 3→26px 采样（压缩）后按同一透过率混入并做 ±2.4px RGB 色散；纯色壁纸下边缘与本体完全一致（自测断言），只有色调层**一层**、不再叠环带，抓屏失败退回透明色调；边框只由 `_edgeOverlay` 画一条；圆角只有亚克力裁窗口区域，玻璃由 Border 自绘避免锯齿弧 |
 | 岛设置（主页式） | `Ui/SettingsWindow.cs` | 左侧五个分区（外观 / 位置与大小 / 显示内容 / 歌词 / 关于）+ 右侧内容，820×580 固定尺寸；含界面材质三档、岛主题四选一、背景透明度（滑杆 + 三档预设）、胶囊/展开缩放、位置、显示器切换、组合模式与模块、网速、通知、自动隐藏、歌词（卡拉OK/延迟）、自启、诊断入口；滑杆实时预览（ApplyConfig/ApplyGeometry 走岛线程队列），关窗写盘 |
 | 多显示器 | `Platform/Displays.cs` | 按工作区落位，拔屏自动回退 |
 | 自动隐藏 | `Ui/NativeIslandApp.cs`（`UpdateAutoHide`） | 默认关闭：无媒体且鼠标离开 10s 收起，光标到工作区顶部 4px 或媒体/通知/托盘唤出时恢复 |
@@ -47,7 +47,8 @@
 
 外观契约：主题四选一（深 / 浅 / 跟随系统 / **液态玻璃**），液态玻璃默认浅色、材质在 Skia 里画
 （不是桌面级 Acrylic——岛是 `UpdateLayeredWindow` 分层窗，拿不到桌面像素）；**液态玻璃自适应**
-（岛本身只做抓屏判亮度；设置窗口的 glass 档另外对圆角内侧约 12px 做桌面采样折射与轻微 RGB 色散，
+（岛本身只做抓屏判亮度；设置窗口的 glass 档是**一整块**面板图——材质色铺满，圆角内侧约 12px 环带把窗外背景
+压缩后按同一透过率混入，纯色壁纸下与本体完全一致（自测断言差异 ≤1.5），
 中心保持透明、100ms 刷新、失败回退透明色调，不做整窗实时模糊）。
 （`glass_adaptive`，默认开）每秒抓一次岛周围桌面的亮度，在浅色玻璃（深字）与深色玻璃（白字）之间
 自动切换：先保证文字对比度达标，再保证岛与背景分得开（白底上的白玻璃会糊成一片），带迟滞不来回闪；
@@ -58,7 +59,7 @@
 B站站标 Always 策略、通知宽度/抢占规则、组合模式槽位与自动长度、卡拉OK进度与延迟补偿、
 性能采样、性能页网速开关、主题解析与不透明度、液态玻璃恒浅色与材质 alpha 单调、
 液态玻璃自适应（深/浅背景选材质、迟滞、白底翻深色、合成色）、透明底离屏 alpha 与深色材质白字、
-自动隐藏谓词、设置窗口材质三档与系统版本回退链、标题栏命中测试等，共 199 条）。
+自动隐藏谓词、设置窗口材质三档与系统版本回退链、标题栏命中测试等，共 201 条）。
 
 ## 构建 / 运行
 
@@ -82,11 +83,12 @@ Copy-Item -Force publish\lingyun.exe ..\..\lingyun.exe
 ## 诊断
 
 ```powershell
-lingyun.exe --self-test          # 199 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局与居中、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质/自适应与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
+lingyun.exe --self-test          # 201 条契约断言（频谱 DSP、选源回落、图标策略、音量钳位、歌词解析、卡拉OK进度、组合模式布局与居中、通知宽度/抢占、性能页网速、主题与不透明度、液态玻璃材质/自适应与透明底 alpha、自动隐藏、开关持久化、配色对比度、日程页布局、媒体焦点沿、岛设置几何）
 lingyun.exe --self-test --diag-quick   # 自测 + 快捷页契约报告（写 灵云-diag.txt）
 lingyun.exe --dump-frames        # 离屏渲染各状态帧（写 灵云-diag/*.png）；含 -glass 液态玻璃帧
 lingyun.exe --backdrop-probe 20  # 真机验证自适应输入：采到的是背景还是岛自己 + 单次耗时 + 决策预览
-lingyun.exe --edge-probe         # 真机验证设置窗口玻璃档的边缘折射：环带非空/颜色多样/中心全透明/圆角命中/压在面板上的明暗差/单次耗时，并出对照图
+lingyun.exe --edge-probe         # 真机验证设置窗口玻璃档：整块面板一张图 + 边缘折射预混 + 单次耗时，并出对照图
+lingyun.exe --settings-render    # 渲染设置窗口真实视觉树（含包边层），逐像素量 alpha/颜色剖面：一层应当是平的
 lingyun.exe --settings-smoke 8 glass   # 起设置窗口停留 8 秒（可选材质 acrylic|glass|classic），供真机截图核对
 lingyun.exe --spectrum-probe 5   # 音频链路自检：频谱捕获峰值 + SMTC 会话状态 + 音量设备 + 天气定位来源
 lingyun.exe --marquee-probe      # 跑马灯运动验证（两次渲染比较标题带重心）

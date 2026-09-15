@@ -24,7 +24,7 @@ internal static class Diag
     {
         "--font-audit", "--dump-text", "--dump-frames", "--self-test", "--diag-all", "--diag-no-frames",
         "--diag-monitor", "--toast-probe", "--toast-test", "--diag-quick", "--spectrum-probe", "--marquee-probe",
-        "--wake-probe", "--settings-smoke", "--backdrop-probe", "--edge-probe",
+        "--wake-probe", "--settings-smoke", "--backdrop-probe", "--edge-probe", "--settings-render",
     };
 
     public static bool ShouldRun(string[] args) => args.Any(a => Known.Contains(a));
@@ -195,6 +195,12 @@ internal static class Diag
         {
             try { failures += EdgeProbe(w); }
             catch (Exception ex) { w.WriteLine("!! --edge-probe 异常: " + ex); failures++; }
+        }
+
+        if (args.Contains("--settings-render"))
+        {
+            try { failures += SettingsRender(w); }
+            catch (Exception ex) { w.WriteLine("!! --settings-render 异常: " + ex); failures++; }
         }
 
         w.WriteLine();
@@ -507,31 +513,36 @@ internal static class Diag
                 source[at] = blue; source[at + 1] = green; source[at + 2] = red; source[at + 3] = 255;
             }
         }
-        var ring = Platform.LiquidGlassEdgeRenderer.RenderRingFromBgra(
-            width, height, 28, 12, 100, source, sourceWidth, sourceHeight, margin);
-        using var bmp = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var pane = Platform.LiquidGlassEdgeRenderer.RenderPaneFromBgra(
+            width, height, 28, 12, 100, unchecked((int)0xD6FFFFFF),
+            source, sourceWidth, sourceHeight, margin);
+        // 画布 = 抓屏区域：先铺"窗外背景"，再把整块面板压上去。
+        // 单层之后就该长这样——一整块均匀玻璃，边缘只是把背景弯折进去，没有第二圈框。
+        using var bmp = new SKBitmap(new SKImageInfo(sourceWidth, sourceHeight, SKColorType.Bgra8888, SKAlphaType.Premul));
         using (var c = new SKCanvas(bmp))
         {
-            c.Clear(new SKColor(0x22, 0x24, 0x2b));
-            using var bg = new SKPaint { IsAntialias = false };
-            for (int y = 0; y < height; y++)
-                for (int x = 0; x < width; x++)
-                {
-                    int at = (y * width + x) * 4;
-                    if (ring[at + 3] == 0) continue;
-                    bg.Color = new SKColor(ring[at + 2], ring[at + 1], ring[at], ring[at + 3]);
-                    c.DrawPoint(x, y, bg);
-                }
-            using var outline = new SKPaint { Color = new SKColor(255, 255, 255, 55), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
-            c.DrawRoundRect(new SKRect(0.5f, 0.5f, width - 0.5f, height - 0.5f), 28, 28, outline);
+            using (var back = new SKBitmap(new SKImageInfo(sourceWidth, sourceHeight, SKColorType.Bgra8888, SKAlphaType.Premul)))
+            {
+                IntPtr bdst = back.GetPixels();
+                for (int y = 0; y < sourceHeight; y++)
+                    System.Runtime.InteropServices.Marshal.Copy(source, y * sourceWidth * 4, bdst + y * back.RowBytes, sourceWidth * 4);
+                c.DrawBitmap(back, 0, 0);
+            }
+            using (var pb = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul)))
+            {
+                IntPtr pdst = pb.GetPixels();
+                for (int y = 0; y < height; y++)
+                    System.Runtime.InteropServices.Marshal.Copy(pane, y * width * 4, pdst + y * pb.RowBytes, width * 4);
+                c.DrawBitmap(pb, margin, margin);
+            }
             using var text = new SKPaint { Color = SKColors.White, TextSize = 16, IsAntialias = true };
-            c.DrawText("edge refraction / RGB dispersion", 28, 48, text);
+            c.DrawText("single pane: material + refracted edge（整块一张图）", margin + 12, margin + 30, text);
         }
         using var image = SKImage.FromBitmap(bmp);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         string path = Path.Combine(DiagDir, "frame-liquid-glass-edge-refraction.png");
         File.WriteAllBytes(path, data.ToArray());
-        w.WriteLine($"边缘折射对照帧: {path}（彩色高频背景 + 圆角内侧折射环带）");
+        w.WriteLine($"边缘折射对照帧: {path}（彩色高频背景上压一整块玻璃：本体均匀，边缘是弯折进去的背景）");
     }
 
     private static int DumpFrames(TextWriter w)
@@ -549,8 +560,9 @@ internal static class Diag
         w.WriteLine("# 主题说明：文件名带 -glass 的帧是「液态玻璃」——固定浅色的【应用内】半透明材质");
         w.WriteLine("#   （浅色半透明表面 + 细边框 + 半透明卡片），背景 alpha 随");
         w.WriteLine("#   「背景透明度」滑杆（40–100%）变化，文字与强调色始终不透明。");
-        w.WriteLine("#   设置窗口的 glass 档另有边缘折射：每 100ms 只采样圆角内侧约 12px 环带（采样点沿法线外推 3→26px，");
-        w.WriteLine("#   把窗外更宽的一条背景压进窄环带）、RGB 通道错开 ±2.4px 色散、另加一圈相对面板色调的棱边，中心保持透明；");
+        w.WriteLine("#   设置窗口的 glass 档是**一整块**面板图：材质色铺满，圆角内侧约 12px 环带把窗外背景");
+        w.WriteLine("#   折射后（沿法线外推 3→26px，即把更宽的一条背景压进窄环带；RGB 错开 ±2.4px 色散）");
+        w.WriteLine("#   按同一个透过率混进材质色。纯色壁纸下与本体完全一致，有结构才看到弯折；");
         w.WriteLine("#   岛体仍是 UpdateLayeredWindow 分层窗、拿不到桌面像素，因此岛帧本身不是桌面级 backdrop 折射。");
         DumpEdgeRefractionFrame(w);
         w.WriteLine();
@@ -1503,9 +1515,9 @@ internal static class Diag
     private static int EdgeProbe(TextWriter w)
     {
         w.WriteLine("========== --edge-probe ==========");
-        w.WriteLine("# 目的：证明玻璃档的边缘不是一层半透明白，而是真的采到了窗口外的桌面像素。");
-        w.WriteLine("#   ① 环带有非零 alpha 且颜色不止一种（不是纯色填充）；");
-        w.WriteLine("#   ② 中心区域 alpha 恒为 0 —— 折射层不会盖住控件；");
+        w.WriteLine("# 目的：证明玻璃档的面板是**一整块**，边缘不是另画上去的一层。");
+        w.WriteLine("#   ① 整块面板一张图铺满（中心就是材质色，不再是一圈环带叠在色调层上）；");
+        w.WriteLine("#   ② 边缘把窗外桌面折射后按同一透过率预混进材质色（纯色壁纸下与本体完全一致）；");
         w.WriteLine("#   ③ 圆角内侧同样命中环带（signed-distance 写反时圆角会完全不折射）；");
         w.WriteLine("#   ④ 单次耗时很小 —— 只抓窗口外扩 48px 的一小块，不是整窗模糊。");
         w.WriteLine();
@@ -1535,7 +1547,8 @@ internal static class Diag
         for (int i = 0; i < runs; i++)
         {
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            bmp = renderer.Capture(hwnd, radiusDip, cfg.Opacity);
+            bmp = renderer.Capture(hwnd, radiusDip, cfg.Opacity,
+                Platform.WindowMaterial.TintArgb(Platform.WindowMaterial.Glass, false));
             double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0
                         / System.Diagnostics.Stopwatch.Frequency;
             best = Math.Min(best, ms);
@@ -1563,67 +1576,63 @@ internal static class Diag
         var buf = new byte[checked(bw * bh * 4)];
         bmp.CopyPixels(buf, bw * 4, 0);
 
-        int lit = 0;
-        var colors = new HashSet<int>();
-        for (int i = 0; i < bw * bh; i++)
+        byte bodyAlpha = Platform.LiquidGlassEdgeRenderer.PanelAlpha(
+            Platform.WindowMaterial.TintArgb(Platform.WindowMaterial.Glass, false), cfg.Opacity);
+        int rimLit = 0;
+        var rimColors = new HashSet<int>();
+        int centerAt = ((bh / 2) * bw + bw / 2) * 4;
+        for (int y = 0; y < bh; y++)
         {
-            byte a = buf[i * 4 + 3];
-            if (a == 0) continue;
-            lit++;
-            colors.Add(buf[i * 4] << 16 | buf[i * 4 + 1] << 8 | buf[i * 4 + 2]);
+            for (int x = 0; x < bw; x++)
+            {
+                int at = (y * bw + x) * 4;
+                // 环带 = 离边界 ≤ 12px 的那一圈（与渲染器同参）；这里取直边窄条
+                bool band = x < 12 || y < 12 || x >= bw - 12 || y >= bh - 12;
+                if (band && buf[at + 3] > 0)
+                {
+                    rimLit++;
+                    rimColors.Add(buf[at] << 16 | buf[at + 1] << 8 | buf[at + 2]);
+                }
+            }
         }
 
-        // 中心 1/4 区域：必须全透明（折射只画边缘环带）
-        int cx0 = bw / 4, cy0 = bh / 4, cx1 = bw - bw / 4, cy1 = bh - bh / 4;
-        int centerLit = 0;
-        for (int y = cy0; y < cy1; y++)
-            for (int x = cx0; x < cx1; x++)
-                if (buf[(y * bw + x) * 4 + 3] != 0) centerLit++;
-
-        // 左上圆角框：修正后的圆角必须也折射（写反时这里是 0）
-        int cornerLit = 0;
-        int cbox = Math.Min(28, Math.Min(bw, bh) / 4);
-        for (int y = 0; y < cbox; y++)
-            for (int x = 0; x < cbox; x++)
-                if (buf[(y * bw + x) * 4 + 3] != 0) cornerLit++;
-
-        w.WriteLine($"窗口像素 = {bw}×{bh}　环带命中 = {lit} px　中心不透明 = {centerLit} px　"
-                    + $"左上圆角命中 = {cornerLit} px　不同颜色 = {colors.Count} 种");
+        w.WriteLine($"窗口像素 = {bw}×{bh}　材质 alpha = {bodyAlpha}　边缘环带 = {rimLit} px"
+                    + $"（{rimColors.Count} 种颜色）　中心像素 = B{buf[centerAt]} G{buf[centerAt + 1]}"
+                    + $" R{buf[centerAt + 2]} A{buf[centerAt + 3]}");
         w.WriteLine($"单次耗时 min {best:0.00} / avg {sum / runs:0.00} / max {worst:0.00} ms"
                     + $"（若做成整窗模糊会高一个数量级）");
         w.WriteLine();
 
-        Check("玻璃边缘：环带确实有像素（非空图）", lit > 0, $"lit={lit}");
+        Check("玻璃单层：整块面板一张图（中心就是材质色，不再是一圈环带叠在色调层上）",
+            rimLit > 0 && buf[centerAt + 3] == bodyAlpha
+            && buf[centerAt] == bodyAlpha && buf[centerAt + 1] == bodyAlpha && buf[centerAt + 2] == bodyAlpha,
+            $"中心 B{buf[centerAt]} G{buf[centerAt + 1]} R{buf[centerAt + 2]} A{buf[centerAt + 3]}（预乘，白材质应四通道同值）");
         Check("玻璃边缘：环带颜色多样（采到的是桌面而不是纯色填充）",
-            colors.Count >= 8, $"colors={colors.Count}");
-        Check("玻璃边缘：中心区域全透明（不覆盖控件）", centerLit == 0, $"centerLit={centerLit}");
-        Check("玻璃边缘：圆角内侧也命中环带", cornerLit > 0, $"cornerLit={cornerLit}");
+            rimColors.Count >= 8, $"colors={rimColors.Count}");
         Check("玻璃边缘：单次开销远小于整窗模糊", sum / runs < 60, $"avg={sum / runs:0.00}ms");
 
-        // 可见性：把环带按真实顺序压在玻璃面板上，算边缘与面板的亮度差。
-        // 这条是用户诉求的机器判据——"窗外是浅色纯色壁纸时也能看出边缘折射"。
-        int tintArgb = Platform.WindowMaterial.TintArgb(Platform.WindowMaterial.Glass, false);
-        double panelA = ((tintArgb >> 24) & 0xFF) * Math.Clamp(cfg.Opacity, 40, 100) / 100.0 / 255.0;
-        double panelR = panelA * ((tintArgb >> 16) & 0xFF) + (1 - panelA) * 128;
-        double panelG = panelA * ((tintArgb >> 8) & 0xFF) + (1 - panelA) * 128;
-        double panelB = panelA * (tintArgb & 0xFF) + (1 - panelA) * 128;
-        double panelLum = Lum(panelR, panelG, panelB);
-        double minLum = double.MaxValue, maxLum = 0;
-        for (int i = 0; i < bw * bh; i++)
+        // 环带颜色与材质色的差：单层后这个差**只**来自"背景被弯折"，纯色壁纸下应当接近 0
+        // （旧做法靠固定明暗硬做出可见的边，那正是用户看到的"两层边框"）。这里只报告不判失败。
+        double rimMin = 255, rimMax = 0, rimSum = 0;
+        int rimN = 0;
+        for (int y = 0; y < bh; y++)
         {
-            double a = buf[i * 4 + 3] / 255.0;
-            if (a == 0) continue;
-            // 环带是预乘 BGRA：先还原再压在面板上
-            double r = buf[i * 4 + 2] / a, g = buf[i * 4 + 1] / a, b = buf[i * 4] / a;
-            double lum = Lum(a * r + (1 - a) * panelR, a * g + (1 - a) * panelG, a * b + (1 - a) * panelB);
-            minLum = Math.Min(minLum, lum);
-            maxLum = Math.Max(maxLum, lum);
+            for (int x = 0; x < bw; x++)
+            {
+                if (!(x < 12 || y < 12 || x >= bw - 12 || y >= bh - 12)) continue;
+                int at = (y * bw + x) * 4;
+                double a = buf[at + 3] / 255.0;
+                if (a <= 0) continue;
+                double lum = Lum(buf[at + 2] / a, buf[at + 1] / a, buf[at] / a);
+                rimMin = Math.Min(rimMin, lum);
+                rimMax = Math.Max(rimMax, lum);
+                rimSum += lum;
+                rimN++;
+            }
         }
-        double edgeDelta = Math.Max(Math.Abs(maxLum - panelLum), Math.Abs(minLum - panelLum));
-        w.WriteLine($"压在浅色玻璃面板上的边缘亮度 {minLum:0.0}–{maxLum:0.0}，面板 {panelLum:0.0}，"
-                    + $"最大差 {edgeDelta:0.0}");
-        Check("玻璃边缘：压在面板上的明暗差肉眼可辨（浅色壁纸也算）",
-            edgeDelta >= 12, $"delta={edgeDelta:0.0}");
+        if (rimN > 0)
+            w.WriteLine($"环带亮度 {rimMin:0.0}–{rimMax:0.0}（均 {rimSum / rimN:0.0}），材质色 255："
+                        + $"偏离 = 背景被弯折带进来的成分，纯色壁纸下应接近 0");
 
         // 把**真机采到的**环带存成 PNG：机器判据在上，人眼看观感看这张。
         // 底图是"藏起窗口后"的干净桌面，再按真实顺序叠色调层和折射环带 —— 看到的就是窗口实际的样子。
@@ -1652,20 +1661,11 @@ internal static class Diag
                     c.Clear(new SKColor(0x4a, 0x4e, 0x58));
                 }
 
-                // 面板矩形 = 抓屏区域去掉外扩的那一圈；圆角必须跟着画，
-                // 否则四角会被这张对照图自己涂白，看起来像"边缘没折射"。
+                // 面板矩形 = 抓屏区域去掉外扩的那一圈。
+                // 注意：_glassPane 现在**自带**材质色调（整块一张图），这里绝不能再画一层色调，
+                // 否则对照图会比真实窗口更不透明。
                 const int margin = 48;
                 var panel = new SKRect(margin, margin, margin + bw, margin + bh);
-                float corner = (float)radiusDip;
-                int tint = Platform.WindowMaterial.TintArgb(Platform.WindowMaterial.Glass, false);
-                int ta = (int)Math.Round(((tint >> 24) & 0xFF) * Math.Clamp(cfg.Opacity, 40, 100) / 100.0);
-                using (var tintPaint = new SKPaint
-                {
-                    Color = new SKColor((byte)((tint >> 16) & 0xFF), (byte)((tint >> 8) & 0xFF),
-                        (byte)(tint & 0xFF), (byte)ta),
-                    IsAntialias = true,
-                })
-                    c.DrawRoundRect(panel, corner, corner, tintPaint);
                 c.DrawBitmap(rbmp, margin, margin);
 
                 using var outline = new SKPaint
@@ -1690,6 +1690,126 @@ internal static class Diag
         }
         w.WriteLine();
         return failed;
+    }
+
+    // ==================================================================
+    // --settings-render ：渲染设置窗口真实的 WPF 视觉树 + 从边界向内的 alpha 剖面
+    // ==================================================================
+    private static int SettingsRender(TextWriter w)
+    {
+        w.WriteLine("========== --settings-render ==========");
+        w.WriteLine("# 为什么要它：--edge-probe 的对照图是用 Skia 手画色调层 + 环带，**不含** WPF 那两层包边");
+        w.WriteLine("#   （_shell 自带的 1px + _edgeOverlay 的 1px），所以它证明不了\"看起来是不是一层\"。");
+        w.WriteLine("#   这里直接渲染真实视觉树，并量出从边界向内的 alpha / 颜色剖面：");
+        w.WriteLine("#   单层材质应当是**平的**；出现一圈环或一处台阶，就是肉眼看到的\"两层\"。");
+        w.WriteLine();
+
+        var cfg = new AppConfig { Theme = "liquid-glass", BaseTheme = "light", Opacity = 100 };
+        using var media = new MediaSessionService();
+        using var island = new NativeIslandApp(cfg, media);
+        var win = new Ui.SettingsWindow(cfg, island, () => { });
+        win.Show();
+        Pump(0.9);
+
+        if (win.Content is not System.Windows.FrameworkElement host || host.ActualWidth <= 0)
+        {
+            w.WriteLine("!! 窗口没布局出来，拿不到视觉树");
+            win.Close();
+            return 1;
+        }
+
+        double scale = 1.0;
+        if (System.Windows.PresentationSource.FromVisual(win) is System.Windows.Interop.HwndSource src)
+            scale = src.CompositionTarget.TransformToDevice.M11;
+        int pw = (int)Math.Round(host.ActualWidth * scale);
+        int ph = (int)Math.Round(host.ActualHeight * scale);
+
+        var rtb = new System.Windows.Media.Imaging.RenderTargetBitmap(
+            pw, ph, 96 * scale, 96 * scale, System.Windows.Media.PixelFormats.Pbgra32);
+        rtb.Render(host);
+        var buf = new byte[checked(pw * ph * 4)];
+        rtb.CopyPixels(buf, pw * 4, 0);
+        win.Close();
+        w.WriteLine($"视觉树 {pw}×{ph}（scale {scale:0.##}）");
+        w.WriteLine();
+
+        const int inset = 60;
+        w.WriteLine(" d   alpha     R    G    B   | 压深底 | 压浅底");
+        double prevA = -1;
+        for (int d = 0; d < 26; d++)
+        {
+            double sa = 0, sr = 0, sg = 0, sb = 0;
+            int n = 0;
+            void Sample(int x, int y)
+            {
+                int at = (y * pw + x) * 4;
+                byte A = buf[at + 3];
+                sa += A;
+                if (A > 0)
+                {
+                    sr += buf[at + 2] * 255.0 / A;
+                    sg += buf[at + 1] * 255.0 / A;
+                    sb += buf[at + 0] * 255.0 / A;
+                }
+                n++;
+            }
+            for (int x = inset; x < pw - inset; x += 5)
+            {
+                Sample(x, d);
+                Sample(x, ph - 1 - d);
+            }
+            for (int y = inset; y < ph - inset; y += 5)
+            {
+                Sample(d, y);
+                Sample(pw - 1 - d, y);
+            }
+            sa /= n; sr /= n; sg /= n; sb /= n;
+            double overDark = sa / 255 * Lum(sr, sg, sb) + (1 - sa / 255) * 30;
+            double overLight = sa / 255 * Lum(sr, sg, sb) + (1 - sa / 255) * 216;
+            string mark = prevA >= 0 && Math.Abs(sa - prevA) >= 3 ? "   <<< 台阶" : "";
+            w.WriteLine($"{d,2}  {sa,5:0.0}   {sr,4:0} {sg,4:0} {sb,4:0}  | {overDark,6:0.0} | {overLight,6:0.0}{mark}");
+            prevA = sa;
+        }
+
+        // 同一条剖面出两张图：压深底 / 压浅底，肉眼核对有没有"框"
+        try
+        {
+            foreach (var (name, bg) in new (string, SKColor)[]
+                     { ("dark", new SKColor(30, 30, 34)), ("light", new SKColor(216, 216, 220)) })
+            {
+                using var bmp = new SKBitmap(new SKImageInfo(pw, ph, SKColorType.Bgra8888, SKAlphaType.Premul));
+                unsafe
+                {
+                    byte* dstBase = (byte*)bmp.GetPixels().ToPointer();
+                    for (int y = 0; y < ph; y++)
+                    {
+                        byte* row = dstBase + y * bmp.RowBytes;
+                        for (int x = 0; x < pw; x++)
+                        {
+                            int at = (y * pw + x) * 4;
+                            double a = buf[at + 3] / 255.0;
+                            // buf 是预乘 BGRA：直接加上 (1-a)*底 即可合成
+                            row[x * 4 + 0] = (byte)Math.Clamp(buf[at + 0] + (1 - a) * bg.Blue, 0, 255);
+                            row[x * 4 + 1] = (byte)Math.Clamp(buf[at + 1] + (1 - a) * bg.Green, 0, 255);
+                            row[x * 4 + 2] = (byte)Math.Clamp(buf[at + 2] + (1 - a) * bg.Red, 0, 255);
+                            row[x * 4 + 3] = 255;
+                        }
+                    }
+                }
+                using var img = SKImage.FromBitmap(bmp);
+                using var data = img.Encode(SKEncodedImageFormat.Png, 100);
+                string path = Path.Combine(DiagDir, $"frame-settings-render-{name}.png");
+                File.WriteAllBytes(path, data.ToArray());
+                w.WriteLine();
+                w.WriteLine($"设置窗真实渲染（压{name}底）: {path}");
+            }
+        }
+        catch (Exception ex)
+        {
+            w.WriteLine("（渲染图写盘失败：" + ex.Message + "）");
+        }
+        w.WriteLine();
+        return 0;
     }
 
     /// <summary>相对亮度（rec.709），判"边缘压到面板上还看不看得出来"用。</summary>
@@ -2440,21 +2560,70 @@ internal static class Diag
             Check("液态玻璃边缘：RGB 通道取样沿法线产生色散位移",
                 Math.Abs(edgeRed.Y - edgeBlue.Y) >= 3.1 && edgeRed.X == edgeBlue.X,
                 $"R({edgeRed.X:0.0},{edgeRed.Y:0.0}) B({edgeBlue.X:0.0},{edgeBlue.Y:0.0})");
-            Check("液态玻璃边缘：折射距离/alpha 随边界距离衰减",
-                Platform.LiquidGlassEdgeRenderer.RefractionOffset(0, 9)
-                    > Platform.LiquidGlassEdgeRenderer.RefractionOffset(9, 9)
-                && Platform.LiquidGlassEdgeRenderer.EdgeAlpha(0, 9, 100)
-                    > Platform.LiquidGlassEdgeRenderer.EdgeAlpha(9, 9, 100)
-                && Platform.LiquidGlassEdgeRenderer.EdgeAlpha(0, 9, 40)
-                    < Platform.LiquidGlassEdgeRenderer.EdgeAlpha(0, 9, 100));
-            Check("液态玻璃边缘：采样输出只写窄环带，中心透明",
-                Platform.LiquidGlassEdgeRenderer.RenderRingFromBgra(
-                    80, 40, 12, 8, 100,
-                    Enumerable.Range(0, 120 * 80 * 4).Select(i => (byte)(i % 251)).ToArray(),
-                    120, 80, 20) is var ring
-                && ring.Length == 80 * 40 * 4
-                && ring[(20 * 80 + 40) * 4 + 3] == 0
-                && Enumerable.Range(0, ring.Length / 4).Any(i => ring[i * 4 + 3] > 0));
+            Check("液态玻璃边缘：取样距离随离边界距离递减（压缩背景，而不是平移）",
+                Platform.LiquidGlassEdgeRenderer.RefractionOffset(9, 9)
+                    < Platform.LiquidGlassEdgeRenderer.RefractionOffset(0, 9)
+                && Platform.LiquidGlassEdgeRenderer.PanelAlpha(unchecked((int)0xD6FFFFFF), 100) == 214
+                && Platform.LiquidGlassEdgeRenderer.PanelAlpha(unchecked((int)0xD6FFFFFF), 40) == 86);
+            // 单层契约（用户反馈"设置页看着还是两层"）：面板背景必须由**一张图**提供，
+            // 本体与边缘同一个透过率。纯色背景下两者数学上完全相同——压出来的结果差异必须为 0；
+            // 背景有结构时才允许不同，那才是折射。
+            {
+                const int gw = 80, gh = 40, gm = 20;
+                int gsw = gw + gm * 2, gsh = gh + gm * 2;
+                int tint = unchecked((int)0xD6FFFFFF);
+                byte[] Make(bool striped)
+                {
+                    var s = new byte[gsw * gsh * 4];
+                    for (int y = 0; y < gsh; y++)
+                        for (int x = 0; x < gsw; x++)
+                        {
+                            int at = (y * gsw + x) * 4;
+                            byte rr = 30, gg = 34, bb = 40;
+                            if (striped && ((x / 6 + y / 6) % 2 == 0)) { rr = 235; gg = 60; bb = 200; }
+                            s[at] = bb; s[at + 1] = gg; s[at + 2] = rr; s[at + 3] = 255;
+                        }
+                    return s;
+                }
+                // 预乘像素压在固定底(34)上之后的样子。alpha 必须从**像素基址**读，
+                // 不能从通道下标 +3 读（那样绿/红会读到下一个像素的 alpha）。
+                double Comp(byte[] p, int baseAt, int ch, int bg)
+                    => p[baseAt + ch] + (1 - p[baseAt + 3] / 255.0) * bg;
+
+                var flat = Platform.LiquidGlassEdgeRenderer.RenderPaneFromBgra(
+                    gw, gh, 12, 8, 100, tint, Make(false), gsw, gsh, gm);
+                int center = ((gh / 2) * gw + gw / 2) * 4;
+                bool uniform = true;
+                string worstAt = "";
+                for (int y = 0; y < gh && uniform; y++)
+                    for (int x = 0; x < gw; x++)
+                    {
+                        int at = (y * gw + x) * 4;
+                        if (Math.Abs(Comp(flat, at, 0, 34) - Comp(flat, center, 0, 34)) > 1.5
+                            || Math.Abs(Comp(flat, at, 1, 34) - Comp(flat, center, 1, 34)) > 1.5
+                            || Math.Abs(Comp(flat, at, 2, 34) - Comp(flat, center, 2, 34)) > 1.5)
+                        {
+                            uniform = false;
+                            worstAt = $"({x},{y}) a={flat[at + 3]} B{Comp(flat, at, 0, 34):0.0}"
+                                      + $" vs 本体 a={flat[center + 3]} B{Comp(flat, center, 0, 34):0.0}";
+                            break;
+                        }
+                    }
+                Check("液态玻璃单层：纯色背景下整块面板（含边缘）压出来完全均匀", uniform, worstAt);
+
+                var striped = Platform.LiquidGlassEdgeRenderer.RenderPaneFromBgra(
+                    gw, gh, 12, 8, 100, tint, Make(true), gsw, gsh, gm);
+                int rimAt = (1 * gw + gw / 2) * 4;   // 顶边环带
+                int rimAt2 = (2 * gw + gw / 3) * 4;
+                double rimDelta = Math.Abs(Comp(striped, rimAt, 0, 34) - Comp(striped, center, 0, 34))
+                                  + Math.Abs(Comp(striped, rimAt2, 0, 34) - Comp(striped, center, 0, 34));
+                Check("液态玻璃单层：有结构背景时边缘才偏离本体（折射仍然在）",
+                    rimDelta > 8, $"delta={rimDelta:0.0}");
+                Check("液态玻璃单层：本体像素 = 材质色 + 材质 alpha（一张图铺满整块）",
+                    flat.Length == gw * gh * 4 && flat[center] == 214 && flat[center + 1] == 214
+                    && flat[center + 2] == 214 && flat[center + 3] == 214,
+                    $"中心 B{flat[center]} G{flat[center + 1]} R{flat[center + 2]} A{flat[center + 3]}（预乘白）");
+            }
             Check("媒体页样式：Normalize 只认 a/b/c（卡片 D 已按用户要求移除）",
                 ConfigStore.Normalize(new AppConfig { MediaStyle = "d" }).MediaStyle == "a");
             {

@@ -31,12 +31,21 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
     }
 
     /// <summary>
-    /// 从窗口外侧屏幕像素生成一张透明底的边缘环带图。
-    /// source 是 top-down BGRA，窗口左上角对应 source 的 (margin, margin)。
+    /// 生成**整块面板**的像素（不是只画一圈环带叠在色调层上）。
+    ///
+    /// 为什么必须是整块：用户反馈"设置页看着还是两层"。实测旧做法的剖面是
+    /// d=0 alpha 46（色调层没盖到最外圈，还叠了 _shell 的 1px 边框）→ d=1..12 一条
+    /// alpha 249→216 的暗带（环带叠在色调层上，边界处近乎不透明）→ d≥13 才是本体白，
+    /// 也就是"白色面板 + 一圈深色框"，放大看就是两个同心圆角矩形。
+    ///
+    /// 要真正一层，面板背景只能由**一张图**提供：本体与边缘用同一套材质公式、同一个透过率，
+    /// 边缘只是把"窗外背景"换成折射后的采样并预混进材质色里。纯色壁纸下两者数学上完全相同
+    /// （差异为 0），背景有结构的地方才看得到弯折 —— 那才是单层玻璃该有的样子。
+    /// 形状（圆角）由窗口自己的圆角裁剪负责，所以这里铺满整块矩形。
     /// </summary>
-    internal static byte[] RenderRingFromBgra(
-        int width, int height, int radius, int band, int opacityPercent,
-        byte[] source, int sourceWidth, int sourceHeight, int margin, int panelLuminance = 226)
+    internal static byte[] RenderPaneFromBgra(
+        int width, int height, int radius, int band, int opacityPercent, int tintArgb,
+        byte[] source, int sourceWidth, int sourceHeight, int margin)
     {
         if (width <= 0 || height <= 0 || sourceWidth <= 0 || sourceHeight <= 0)
             return Array.Empty<byte>();
@@ -46,15 +55,32 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
         radius = Math.Clamp(radius, 0, Math.Min(width, height) / 2);
         band = Math.Clamp(band, 1, Math.Max(1, Math.Min(width, height) / 2));
         int opacity = Math.Clamp(opacityPercent, 0, 100);
+        byte bodyAlpha = PanelAlpha(tintArgb, opacity);
+        double a = bodyAlpha / 255.0;
+        byte tintR = (byte)((tintArgb >> 16) & 0xFF);
+        byte tintG = (byte)((tintArgb >> 8) & 0xFF);
+        byte tintB = (byte)(tintArgb & 0xFF);
         var pixels = new byte[checked(width * height * 4)];
+
+        // 本体：材质色 + 材质 alpha。窗外的桌面由分层窗自己合成进来，这里不预混。
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int at = (y * width + x) * 4;
+                pixels[at] = Premul(tintB, bodyAlpha);
+                pixels[at + 1] = Premul(tintG, bodyAlpha);
+                pixels[at + 2] = Premul(tintR, bodyAlpha);
+                pixels[at + 3] = bodyAlpha;
+            }
+        }
 
         void PaintPixel(int px, int py)
         {
             var edge = Probe(px + 0.5, py + 0.5, width, height, radius, band);
             if (!edge.InBand) return;
 
-            // p is inside the glass. Move from p to its boundary, then a few pixels
-            // out into the desktop; that is the part which makes the edge visibly bend.
+            // p 在玻璃内侧：先走到边界，再沿法线向外取桌面像素。
             double outside = RefractionOffset(edge.Distance, band);
             double bx = px + 0.5 + edge.Nx * (edge.Distance + outside);
             double by = py + 0.5 + edge.Ny * (edge.Distance + outside);
@@ -81,41 +107,17 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
             green = Shift(green, detail);
             blue = Shift(blue, detail);
 
-            // 轻微白色镜面混合，让暗背景上的折射边仍然有玻璃感。
-            double t = Math.Clamp(1 - edge.Distance / Math.Max(1, band), 0, 1);
-            double whiteMix = 0.10 + 0.14 * t;
-            red = MixWhite(red, whiteMix);
-            green = MixWhite(green, whiteMix);
-            blue = MixWhite(blue, whiteMix);
-
-            // 玻璃棱边：最外侧 1–4px 相对**面板色调**压暗（浅面板）或提亮（深面板）。
-            // 为什么必须有这一步：窗外是纯色/浅色壁纸时，"更透"的环带和近白面板几乎同色，
-            // 数学上就看不见折射（实测窗外 ~210、浅色玻璃面板 ~226）。棱边的明暗与桌面内容无关，
-            // 任何壁纸上都能看到那条玻璃棱，再叠上压缩后的背景与 RGB 色散才是完整的边缘折射。
-            double bevel = BevelAmount(edge.Distance, band);
-            if (bevel > 0)
-            {
-                double k = bevel * 0.40;
-                if (panelLuminance >= 140)
-                {
-                    red = Darken(red, k);
-                    green = Darken(green, k);
-                    blue = Darken(blue, k);
-                }
-                else
-                {
-                    red = MixWhite(red, k * 0.8);
-                    green = MixWhite(green, k * 0.8);
-                    blue = MixWhite(blue, k * 0.8);
-                }
-            }
-
-            byte alpha = EdgeAlpha(edge.Distance, band, opacity);
+            // 单层的关键：把"折射后的背景"按**本体同一个透过率**预混进材质色，而不是把环带
+            // 当独立图层压上去。这里 alpha 写满，是因为背景已经烤进颜色里了 ——
+            // 视觉上的透过率与本体完全一致，因此不会出现第二条带或第二圈框。
+            red = Mix(tintR, red, a);
+            green = Mix(tintG, green, a);
+            blue = Mix(tintB, blue, a);
             int at = (py * width + px) * 4;
-            pixels[at] = Premul(blue, alpha);
-            pixels[at + 1] = Premul(green, alpha);
-            pixels[at + 2] = Premul(red, alpha);
-            pixels[at + 3] = alpha;
+            pixels[at] = blue;
+            pixels[at + 1] = green;
+            pixels[at + 2] = red;
+            pixels[at + 3] = 255;
         }
 
         void PaintRect(int x0, int y0, int x1, int y1)
@@ -140,6 +142,12 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
         PaintRect(width - corner, height - corner, width, height);
         return pixels;
     }
+
+    /// <summary>面板本体的 alpha：材质色调 alpha × 背景透明度，纯函数（自测用）。</summary>
+    internal static byte PanelAlpha(int tintArgb, int opacityPercent)
+        => (byte)Math.Clamp(
+            Math.Round(((tintArgb >> 24) & 0xFF) * Math.Clamp(opacityPercent, 0, 100) / 100.0),
+            0, 255);
 
     /// <summary>判断一个窗口内像素是否位于圆角边缘环带，并返回外法线。</summary>
     internal static EdgeProbe Probe(double x, double y, int width, int height, int radius, int band)
@@ -195,24 +203,8 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
         return 3 + 23 * Math.Pow(t, 1.5);
     }
 
-    /// <summary>玻璃棱边强度：只在最外侧 1–4px 起作用，向内侧迅速归零。</summary>
-    internal static double BevelAmount(double distance, double band)
-    {
-        double t = Math.Clamp(1 - distance / Math.Max(1, band), 0, 1);
-        return Math.Pow(t, 2.4);
-    }
-
-    /// <summary>
-    /// 边缘 alpha：靠近边界更透（露出真实背景），向内侧必须**衰减到 0**。
-    /// 早期版本写成 (26 + 190*t) 带 10% 底噪，环带就在 12% 透明度上被硬切断——
-    /// 实测在离边界 12px 处留下一道 1px 接缝（相邻像素亮度跳 19）。
-    /// </summary>
-    internal static byte EdgeAlpha(double distance, double band, int opacityPercent)
-    {
-        double t = Math.Clamp(1 - distance / Math.Max(1, band), 0, 1);
-        double material = 216 * Math.Pow(t, 1.15);
-        return (byte)Math.Clamp(Math.Round(material * Math.Clamp(opacityPercent, 0, 100) / 100.0), 0, 255);
-    }
+    private static byte Mix(byte material, byte sampled, double materialAlpha)
+        => (byte)Math.Clamp(Math.Round(material * materialAlpha + sampled * (1 - materialAlpha)), 0, 255);
 
     /// <summary>给自测和采样映射用：同一边缘的 RGB 三个取样点略微错开。</summary>
     internal static (double X, double Y) RefractedPoint(
@@ -223,7 +215,7 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
         return (x + edge.Nx * offset, y + edge.Ny * offset);
     }
 
-    internal BitmapSource? Capture(IntPtr hwnd, double radiusDip, int opacityPercent, int panelLuminance = 226)
+    internal BitmapSource? Capture(IntPtr hwnd, double radiusDip, int opacityPercent, int tintArgb)
     {
         if (_disposed || hwnd == IntPtr.Zero || !Native.GetWindowRect(hwnd, out var rect)) return null;
         int width = rect.Right - rect.Left;
@@ -237,8 +229,8 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
         double scale = dpi > 0 ? dpi / 96.0 : 1.0;
         int radius = (int)Math.Round(Math.Clamp(radiusDip, 0, 200) * scale);
         int band = Math.Clamp((int)Math.Round(EdgeBandDip * scale), 9, 26);
-        var pixels = RenderRingFromBgra(width, height, radius, band, opacityPercent,
-            source, sourceWidth, sourceHeight, CaptureMarginPx, panelLuminance);
+        var pixels = RenderPaneFromBgra(width, height, radius, band, opacityPercent, tintArgb,
+            source, sourceWidth, sourceHeight, CaptureMarginPx);
         if (pixels.Length == 0) return null;
         var result = BitmapSource.Create(width, height, dpi > 0 ? dpi : 96, dpi > 0 ? dpi : 96,
             PixelFormats.Pbgra32, null, pixels, width * 4);
@@ -315,12 +307,6 @@ internal sealed class LiquidGlassEdgeRenderer : IDisposable
         g = source[at + 1];
         r = source[at + 2];
     }
-
-    private static byte MixWhite(byte value, double amount)
-        => (byte)Math.Clamp(Math.Round(value * (1 - amount) + 255 * amount), 0, 255);
-
-    private static byte Darken(byte value, double amount)
-        => (byte)Math.Clamp(Math.Round(value * (1 - amount)), 0, 255);
 
     private static byte Shift(byte value, double delta)
         => (byte)Math.Clamp(Math.Round(value + delta), 0, 255);

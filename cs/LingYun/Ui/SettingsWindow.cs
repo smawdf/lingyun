@@ -18,7 +18,7 @@ namespace LingYun.Ui;
 ///
 /// 界面材质三档（设置窗口自身，岛的材质在「主题」里选）：
 ///   acrylic 亚克力：DWM 系统模糊（Win11 背景材质 / Win10 合成属性），半透明面板
-///   glass   液态玻璃：半透明色调 + 圆角边缘屏幕采样折射/轻微色散（只画边缘环带，非全窗模糊）
+///   glass   液态玻璃：整块面板一张图（材质色 + 边缘折射预混），不叠第二层色调/环带
 ///   classic 原生 Windows：纯色 + 方角 + 系统控件长相
 /// </summary>
 public sealed class SettingsWindow : Window
@@ -98,11 +98,14 @@ public sealed class SettingsWindow : Window
     private const double ShadowMargin = 16;      // 面板外留给落影的一圈
     private readonly Border _shadowHost = new();
     private readonly Border _tintOverlay = new();
-    private readonly Image _refractOverlay = new();
+    /// <summary>玻璃档的整块面板底色（材质色 + 边缘折射预混）；一张图 = 一层，不再和色调层叠。</summary>
+    private readonly Image _glassPane = new();
     private readonly Border _edgeOverlay = new();
     private readonly LiquidGlassEdgeRenderer _edgeRenderer = new();
     private readonly DispatcherTimer _edgeTimer;
     private bool _edgeDirty = true;
+    /// <summary>整块玻璃底色图是否已就绪（就绪时色调层必须让位，否则就叠成两层）。</summary>
+    private bool _glassPaneLive;
     private const double EdgeRefreshMs = 100;
     private const double NavW = 196;
 
@@ -123,11 +126,11 @@ public sealed class SettingsWindow : Window
                 RefreshEdgeRefraction();
             }
         };
-        _refractOverlay.IsHitTestVisible = false;
-        _refractOverlay.Stretch = Stretch.Fill;
-        _refractOverlay.HorizontalAlignment = HorizontalAlignment.Stretch;
-        _refractOverlay.VerticalAlignment = VerticalAlignment.Stretch;
-        _refractOverlay.Visibility = Visibility.Collapsed;
+        _glassPane.IsHitTestVisible = false;
+        _glassPane.Stretch = Stretch.Fill;
+        _glassPane.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _glassPane.VerticalAlignment = VerticalAlignment.Stretch;
+        _glassPane.Visibility = Visibility.Collapsed;
 
         Title = "灵云设置";
         Width = WinW;
@@ -166,7 +169,7 @@ public sealed class SettingsWindow : Window
         // 它是合成器的一部分，窗口移动时模糊跟手；"抓屏 + 自己糊"在拖动时必然滞后。
         var panel = new Grid();
         panel.Children.Add(_tintOverlay);
-        panel.Children.Add(_refractOverlay);
+        panel.Children.Add(_glassPane);
         panel.Children.Add(BuildLayout());
         // 包围线放最上层：Border 自己的描边画在子元素**下面**，会被内容和色调层盖住，
         // 所以单独用一个只描边的 Border 盖上来（不吃鼠标事件，拖动照旧）
@@ -191,7 +194,7 @@ public sealed class SettingsWindow : Window
         {
             _edgeTimer.Stop();
             _edgeRenderer.Dispose();
-            _refractOverlay.Source = null;
+            _glassPane.Source = null;
             try { _save(); } catch { /* 写盘失败不致命 */ }
         };
         // 有 HWND 之后：把自己从抓屏里排除（否则抓"背后的屏幕"抓到的是自己），并关掉 DWM 圆角
@@ -226,10 +229,36 @@ public sealed class SettingsWindow : Window
         _edgeDirty = true;
     }
 
+    /// <summary>
+    /// 底色层只能有一层。玻璃档由 <see cref="_glassPane"/>（整块一张图）负责；
+    /// 它没准备好（抓屏失败/还没抓到）时退回透明色调层。两者绝不能同时画——
+    /// 叠起来 alpha 会从 0.84 变成 0.97，等于又做出一层。
+    /// </summary>
+    private void UpdateTintLayer()
+    {
+        string material = MaterialFor(_cfg.Theme);
+        if (material == WindowMaterial.Acrylic || _glassPaneLive)
+        {
+            _tintOverlay.Background = Brushes.Transparent;
+            return;
+        }
+        double op = Math.Clamp(_cfg.Opacity, 40, 100) / 100.0;
+        var tintColor = FromArgb(WindowMaterial.TintArgb(material, _dark));
+        _tintOverlay.Background = new SolidColorBrush(Color.FromArgb(
+            (byte)Math.Round(tintColor.A * op), tintColor.R, tintColor.G, tintColor.B));
+    }
+
+    private void SetGlassPaneLive(bool live)
+    {
+        if (_glassPaneLive == live) return;
+        _glassPaneLive = live;
+        UpdateTintLayer();
+    }
+
     private void UpdateEdgeRefractionTimer()
     {
         bool glass = IsVisible && MaterialFor(_cfg.Theme) == WindowMaterial.Glass && IsInitialized;
-        _refractOverlay.Visibility = glass ? Visibility.Visible : Visibility.Collapsed;
+        _glassPane.Visibility = glass ? Visibility.Visible : Visibility.Collapsed;
         if (glass)
         {
             _edgeDirty = true;
@@ -239,7 +268,8 @@ public sealed class SettingsWindow : Window
         else
         {
             _edgeTimer.Stop();
-            _refractOverlay.Source = null;
+            _glassPane.Source = null;
+            SetGlassPaneLive(false);
         }
     }
 
@@ -251,25 +281,18 @@ public sealed class SettingsWindow : Window
         try
         {
             var source = _edgeRenderer.Capture(new WindowInteropHelper(this).Handle,
-                WindowMaterial.Radius(WindowMaterial.Glass), _cfg.Opacity, PanelLuminance());
+                WindowMaterial.Radius(WindowMaterial.Glass), _cfg.Opacity,
+                WindowMaterial.TintArgb(WindowMaterial.Glass, _dark));
             if (source is not null)
-                _refractOverlay.Source = source;
+            {
+                _glassPane.Source = source;
+                SetGlassPaneLive(true);
+            }
         }
         catch
         {
-            // 屏幕捕获失败时保留透明色调，不让材质影响设置窗口操作。
+            // 屏幕捕获失败时保留原来的透明色调层，不让材质影响设置窗口操作。
         }
-    }
-
-    /// <summary>
-    /// 玻璃面板本体的亮度，决定棱边往哪边做明暗：浅面板压暗、深面板提亮。
-    /// 只取色调色即可——棱边要对比的是"面板看起来的样子"，不是桌面。
-    /// </summary>
-    private int PanelLuminance()
-    {
-        int argb = WindowMaterial.TintArgb(WindowMaterial.Glass, _dark);
-        int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
-        return (int)Math.Round(0.2126 * r + 0.7152 * g + 0.0722 * b);
     }
 
     private void OnLocationChanged()
@@ -808,19 +831,12 @@ public sealed class SettingsWindow : Window
             : (_dark ? "#33ffffff" : "#2effffff")));
         // 色调只画一次：亚克力由 DWM 的 accent 上色（我们这层设成全透明，
         // 否则同一层色调被刷两遍——白底上能看出来的"两层"就是这么来的）；
-        // 液态玻璃没有系统模糊，色调由我们画，并跟随「背景透明度」滑杆。
-        int tintArgb = WindowMaterial.TintArgb(material, _dark);
-        if (material == WindowMaterial.Acrylic)
-        {
-            _tintOverlay.Background = Brushes.Transparent;
-        }
-        else
-        {
-            double op = Math.Clamp(_cfg.Opacity, 40, 100) / 100.0;
-            var tintColor = FromArgb(tintArgb);
-            _tintOverlay.Background = new SolidColorBrush(Color.FromArgb(
-                (byte)Math.Round(tintColor.A * op), tintColor.R, tintColor.G, tintColor.B));
-        }
+        // 液态玻璃由 _glassPane（整块一张图）提供底色，只有它没准备好时才退回这层色调。
+        UpdateTintLayer();
+        // 玻璃档：_glassPane 要铺满整块窗口，_shell 再留 1px 边框会把最外圈挤成半透明细环
+        // （实测那一圈 alpha 只有 46，而里面是 214+）—— 那正是"两层"最外面那道边。
+        // 边框由 _edgeOverlay 单独画一条，保持"只有一道"。
+        _shell.BorderThickness = new Thickness(material == WindowMaterial.Glass ? 0 : 1);
         _shell.Background = null;                    // 色调交给 overlay（它在背景图之上）
         UpdatePanelClip();
 
@@ -839,10 +855,10 @@ public sealed class SettingsWindow : Window
             string effective = WindowMaterial.ResolveBackdrop(Environment.OSVersion.Version.Build, material);
             _materialHint.Text = material switch
             {
-                "glass" => "与岛同一套材质：清晰透明，圆角边缘把窗外桌面采样后压进窄环带"
-                           + "（带轻微 RGB 色散与一圈棱边明暗），中心保持透明；"
-                           + "只刷新边缘环带，不做全窗实时模糊，跟随「背景透明度」"
-                           + "（抓屏失败时回退为透明色调）。",
+                "glass" => "与岛同一套材质：整块面板由一张图铺满（不是色调层再叠一圈环带），"
+                           + "圆角边缘把窗外桌面折射后按**同一个透过率**混进材质，"
+                           + "纯色壁纸下与本体完全一致、有结构的地方才看得到弯折；"
+                           + "不做全窗实时模糊，跟随「背景透明度」（抓屏失败时退回透明色调）。",
                 _ => "岛与设置窗口都用亚克力：窗口是系统合成器模糊（DWM），"
                      + "桌面被糊在面板后面、移动跟手。"
                      + (effective == "solid" ? "（当前系统不支持系统模糊，退化为纯色）" : ""),
