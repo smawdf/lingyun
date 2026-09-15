@@ -626,6 +626,7 @@ public sealed class NativeIslandApp : IDisposable
                 _islandH = _fromH + (_toH - _fromH) * e;
             }
 
+            PollDeviceSwitch();   // 设备切换的回读校验：非阻塞，每帧只做 1~2 次 COM 读
             RenderFrame();
             Thread.Sleep(16);
         }
@@ -723,6 +724,14 @@ public sealed class NativeIslandApp : IDisposable
     private AudioDeviceService.DeviceList? _outDevs, _inDevs;
     /// <summary>上次枚举设备的时间：失败时别每帧重试（COM 枚举不适合按帧跑）。</summary>
     private long _devReadAt;
+    /// <summary>上次读到设备名的时间：读名字很贵（~224ms），10 秒内复用缓存。</summary>
+    private long _devListAt;
+    /// <summary>等待回读校验的设备切换。换设备不是瞬时的，但**绝不能在渲染线程上 sleep**。</summary>
+    private int _devSwitchWhich;
+    private string _devSwitchId = "";
+    private string _devSwitchName = "";
+    private long _devSwitchDeadline;
+    private bool _devSwitchRetried;
     private bool _seekDrag;
     private long? _seekPreviewMs;
     private DateTime? _seekPreviewAt;
@@ -1149,7 +1158,7 @@ public sealed class NativeIslandApp : IDisposable
                         if (!QuickDevRow(qb, _lastScale, i).Contains((float)x, (float)y)) continue;
                         _devListOpen = i + 1;
                         _devScroll = 0;
-                        RefreshDeviceLists();
+                        RefreshDeviceLists();   // 10 秒内直接复用缓存，不会卡
                         return;
                     }
                 }
@@ -2064,8 +2073,13 @@ public sealed class NativeIslandApp : IDisposable
     /// 枚举两侧设备并缓存（**在岛线程上跑**：MMDeviceEnumerator / IPolicyConfig 都是非敏捷 COM）。
     /// 只在展开列表时枚举一次，避免每帧碰 COM。
     /// </summary>
-    private void RefreshDeviceLists()
+    private void RefreshDeviceLists(bool force = false)
     {
+        // 读设备名是**每设备一次属性读取**（实测整套 ~224ms），绝不能每次打开列表都重来；
+        // 10 秒内直接复用缓存（设备名基本只在插拔时变），避免"打开列表卡一下"。
+        long now = Environment.TickCount64;
+        if (!force && _outDevs is not null && _inDevs is not null && now - _devListAt < 10_000) return;
+        _devListAt = now;
         try
         {
             _deviceSvc ??= new AudioDeviceService();
@@ -2076,28 +2090,88 @@ public sealed class NativeIslandApp : IDisposable
     }
 
     /// <summary>
-    /// 切默认设备（点列表项走这里）。**切完必须回读**：调用返回成功不等于真的换了——
-    /// 实测 FxSound 这类输出端增强软件会把默认设备抢回去，所以没生效就如实给一行提示，
-    /// 而不是把界面改成"已切换"骗用户。
+    /// 切默认设备（点列表项走这里）。**立刻返回、不等待**：校验交给帧循环里的
+    /// <see cref="PollDeviceSwitch"/>。换设备不是瞬时的，而这段代码跑在**渲染线程**上——
+    /// 之前用 Thread.Sleep 轮询等待校验，输出侧被 FxSound 抢回时必然走满校验，
+    /// 一次点击会把岛冻住好几秒（用户反馈的"切换很慢很卡"就是这么来的）。
+    /// 界面先把默认标记挪过去给即时反馈，校验失败再挪回来并如实提示。
     /// </summary>
     private void ApplyDeviceSwitch(int which, string deviceId)
     {
         var flow = which == 1 ? AudioDeviceService.Flow.Output : AudioDeviceService.Flow.Input;
-        string targetName = (_outDevs, _inDevs) is var (o, i)
-            ? ((which == 1 ? o : i)?.Items.FirstOrDefault(d => d.Id == deviceId).Name ?? "该设备")
-            : "该设备";
+        var list = which == 1 ? _outDevs : _inDevs;
+        string name = list?.Items.FirstOrDefault(d => d.Id == deviceId).Name ?? "该设备";
+        bool applied;
         try
         {
             _deviceSvc ??= new AudioDeviceService();
-            _deviceSvc.SetDefault(flow, deviceId);
+            applied = _deviceSvc.ApplyDefault(flow, deviceId);
         }
-        catch { /* 切不动就保持原样，下面按真实状态给提示 */ }
-        RefreshDeviceLists();
-        string nowDefault = ((which == 1 ? _outDevs : _inDevs)?.Items.FirstOrDefault(d => d.IsDefault).Id) ?? "";
-        if (string.Equals(nowDefault, deviceId, StringComparison.OrdinalIgnoreCase))
-            ShowHint($"已切到「{targetName}」");
-        else
-            ShowHint("没切换成功：多半是音频增强/虚拟声卡软件把默认设备抢回去了（例如 FxSound）");
+        catch { applied = false; }
+        if (!applied)
+        {
+            ShowHint("切换失败：设备不存在或音频服务不可用");
+            return;
+        }
+        MarkCachedDefault(which, deviceId);      // 即时反馈（纯内存，不碰 COM）
+        _devSwitchWhich = which;
+        _devSwitchId = deviceId;
+        _devSwitchName = name;
+        _devSwitchRetried = false;
+        _devSwitchDeadline = Environment.TickCount64 + 1500;
+    }
+
+    /// <summary>把缓存的默认标记挪到 deviceId（纯内存操作，不重新枚举、不碰 COM）。</summary>
+    private void MarkCachedDefault(int which, string deviceId)
+    {
+        var list = which == 1 ? _outDevs : _inDevs;
+        if (list is not { } l) return;
+        var items = l.Items.Select(d => d with { IsDefault = d.Id == deviceId }).ToArray();
+        var updated = new AudioDeviceService.DeviceList(l.Flow, items, deviceId);
+        if (which == 1) _outDevs = updated;
+        else _inDevs = updated;
+    }
+
+    /// <summary>把缓存的默认标记挪回系统真实默认（只读一次默认 Id，不重新枚举）。</summary>
+    private void RevertCachedDefaultToReal(int which)
+    {
+        var flow = which == 1 ? AudioDeviceService.Flow.Output : AudioDeviceService.Flow.Input;
+        string real = "";
+        try { real = _deviceSvc?.CurrentDefault(flow) ?? ""; }
+        catch { /* 读不到就整表重来 */ }
+        if (real.Length > 0) MarkCachedDefault(which, real);
+        else RefreshDeviceLists();
+    }
+
+    /// <summary>
+    /// 帧循环里的非阻塞回读校验：生效了就给提示；到点还没生效重试一次；再不行就挪回真实默认并说明原因。
+    /// 每次只做 1~2 次 COM 读取（亚毫秒~毫秒级），不会卡住渲染。
+    /// </summary>
+    private void PollDeviceSwitch()
+    {
+        if (_devSwitchId.Length == 0) return;
+        var flow = _devSwitchWhich == 1 ? AudioDeviceService.Flow.Output : AudioDeviceService.Flow.Input;
+        bool ok;
+        try { ok = _deviceSvc?.IsDefault(flow, _devSwitchId) ?? false; }
+        catch { ok = false; }
+        if (ok)
+        {
+            ShowHint($"已切到「{_devSwitchName}」");
+            _devSwitchId = "";
+            return;
+        }
+        long now = Environment.TickCount64;
+        if (now < _devSwitchDeadline) return;
+        if (!_devSwitchRetried)
+        {
+            _devSwitchRetried = true;
+            _devSwitchDeadline = now + 1500;
+            try { _deviceSvc?.ApplyDefault(flow, _devSwitchId); } catch { /* 下一轮再看 */ }
+            return;
+        }
+        _devSwitchId = "";
+        RevertCachedDefaultToReal(_devSwitchWhich);
+        ShowHint("没切换成功：多半是音频增强/虚拟声卡软件把默认设备抢回去了（例如 FxSound）");
     }
 
     /// <summary>离屏渲染用：注入歌词（null 恢复读真实服务）。当前位置仍取自注入的媒体状态。</summary>

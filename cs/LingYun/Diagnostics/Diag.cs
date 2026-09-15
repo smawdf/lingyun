@@ -1835,6 +1835,39 @@ internal static class Diag
             Check("音频设备：未公开的 SetDefaultEndpoint 能调通（HRESULT = 0）", outHr == "0", $"hr={outHr}");
         if (ins is { Items.Length: > 0 })
             Check("音频设备：录音侧同样能调通", inHr == "0", $"hr={inHr}");
+        // 性能：切换路径上每一步的真实耗时。用户反馈"切换很慢很卡"，所以把它量出来：
+        // 之前那次是 SetDefault 里用 Thread.Sleep 轮询等校验（最多 25×100ms，失败还重试一次），
+        // 而它跑在岛的**渲染线程**上 → 输出侧被 FxSound 抢回时必然走满校验，一次点击冻住岛好几秒。
+        double msListNamed = 0, msListFast = 0, msDefaultId = 0, msIsDefault = 0, msApply = 0, msFail = 0;
+        if (outs is { Items.Length: > 0 } o3)
+        {
+            string cur = o3.CurrentId;
+            island.Post(() =>
+            {
+                double T(Action a)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    a();
+                    return sw.Elapsed.TotalMilliseconds;
+                }
+                msListNamed = T(() => svc.List(Services.AudioDeviceService.Flow.Output));
+                msListFast = T(() => svc.List(Services.AudioDeviceService.Flow.Output, withNames: false));
+                msDefaultId = T(() => svc.CurrentDefault(Services.AudioDeviceService.Flow.Output));
+                msIsDefault = T(() => svc.IsDefault(Services.AudioDeviceService.Flow.Output, cur));
+                msApply = T(() => svc.ApplyDefault(Services.AudioDeviceService.Flow.Output, cur));   // 空操作
+                msFail = T(() => svc.ApplyDefault(Services.AudioDeviceService.Flow.Output, "{不存在的设备}"));
+            });
+            Pump(2.0);
+            w.WriteLine($"耗时：枚举(读名字) {msListNamed:0.0}ms　枚举(不读名字) {msListFast:0.0}ms　"
+                        + $"读默认Id {msDefaultId:0.0}ms");
+            w.WriteLine($"      帧循环每帧要做的回读校验 IsDefault {msIsDefault:0.0}ms　"
+                        + $"切换(不等待) {msApply:0.0}ms　切换失败路径 {msFail:0.0}ms");
+            Check("音频设备：每帧的回读校验足够便宜（≤30ms，不拖累 60fps 渲染）",
+                msIsDefault is > 0 and <= 30, $"{msIsDefault:0.0}ms");
+            Check("音频设备：切换本身不等待（≤200ms 返回）", msApply is > 0 and <= 200, $"{msApply:0.0}ms");
+            Check("音频设备：无效设备立刻失败（不再走沉睡式校验）", msFail <= 200, $"{msFail:0.0}ms");
+        }
+
         w.WriteLine();
         return failed;
     }

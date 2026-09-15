@@ -32,8 +32,12 @@ public sealed class AudioDeviceService : IDisposable
     private MMDeviceEnumerator? _enumerator;
     private bool _failed;
 
-    /// <summary>枚举某一侧的设备；失败返回 null（没有设备/COM 不可用）。</summary>
-    public DeviceList? List(Flow flow)
+    /// <summary>
+    /// 枚举某一侧的设备；失败返回 null（没有设备/COM 不可用）。
+    /// <paramref name="withNames"/> = false 时跳过 FriendlyName —— 那是**每个设备一次属性读取**，
+    /// 是整条链路里最贵的一步；只做存在性/默认项判断时别读它。
+    /// </summary>
+    public DeviceList? List(Flow flow, bool withNames = true)
     {
         var en = Enumerator();
         if (en is null) return null;
@@ -50,7 +54,8 @@ public sealed class AudioDeviceService : IDisposable
                 string id;
                 try { id = d.ID; } catch { continue; }
                 string name;
-                try { name = d.FriendlyName; } catch { name = "(未知设备)"; }
+                if (!withNames) name = id;
+                else { try { name = d.FriendlyName; } catch { name = "(未知设备)"; } }
                 items.Add(new DeviceInfo(id, name, string.Equals(id, current, StringComparison.OrdinalIgnoreCase)));
                 try { d.Dispose(); } catch { /* ignore */ }
             }
@@ -68,7 +73,45 @@ public sealed class AudioDeviceService : IDisposable
     }
 
     /// <summary>
-    /// 把某一侧的默认设备切成 deviceId。
+    /// **只把默认设备切过去，不做任何等待**（界面用这个：渲染线程上绝不能 sleep）。
+    /// 调用方自己用 <see cref="IsDefault"/> 回读确认。返回是否所有 role 调用都报成功。
+    /// </summary>
+    public bool ApplyDefault(Flow flow, string deviceId)
+    {
+        if (string.IsNullOrEmpty(deviceId)) return false;
+        // 存在性检查用"不读名字"的便宜枚举
+        var list = List(flow, withNames: false);
+        if (list is not { } l || !l.Items.Any(d => d.Id == deviceId)) return false;
+        return Apply(deviceId);
+    }
+
+    /// <summary>某个 role 的当前默认设备 Id（单次读取，~1ms）。</summary>
+    public string? CurrentDefault(Flow flow, Role role = Role.Multimedia)
+    {
+        var en = Enumerator();
+        if (en is null) return null;
+        try
+        {
+            return en.GetDefaultAudioEndpoint(flow == Flow.Output ? DataFlow.Render : DataFlow.Capture, role).ID;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>默认设备是否已经是 deviceId（控制台 + 多媒体两个 role 都查；快，界面按帧轮询用）。</summary>
+    public bool IsDefault(Flow flow, string deviceId)
+    {
+        if (string.IsNullOrEmpty(deviceId)) return false;
+        foreach (var role in new[] { Role.Console, Role.Multimedia })
+        {
+            if (!string.Equals(CurrentDefault(flow, role), deviceId, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// 把某一侧的默认设备切成 deviceId（**阻塞版：会等回读校验，最多几秒**）。
+    /// 只给命令行探针用——界面绝不能调它，那会把渲染线程卡住。
     ///
     /// 三条来自社区实战的硬规矩（见文件头的说明）：
     ///   1. **不信 S_OK**：未公开接口返回成功也可能什么都没发生（虚拟声卡驱动会自己抢回默认），
