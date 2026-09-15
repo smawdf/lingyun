@@ -25,7 +25,7 @@ internal static class Diag
         "--font-audit", "--dump-text", "--dump-frames", "--self-test", "--diag-all", "--diag-no-frames",
         "--diag-monitor", "--toast-probe", "--toast-test", "--diag-quick", "--spectrum-probe", "--marquee-probe",
         "--wake-probe", "--settings-smoke", "--backdrop-probe", "--acrylic-probe", "--volume-probe",
-        "--audio-probe", "--outside-click-probe", "--frame-probe",
+        "--audio-probe", "--outside-click-probe", "--frame-probe", "--toast-shrink-probe",
     };
 
     public static bool ShouldRun(string[] args) => args.Any(a => Known.Contains(a));
@@ -229,6 +229,12 @@ internal static class Diag
         {
             try { failures += FrameProbe(w); }
             catch (Exception ex) { w.WriteLine("!! --frame-probe 异常: " + ex); failures++; }
+        }
+
+        if (args.Contains("--toast-shrink-probe"))
+        {
+            try { failures += ToastShrinkProbe(w); }
+            catch (Exception ex) { w.WriteLine("!! --toast-shrink-probe 异常: " + ex); failures++; }
         }
 
         if (args.Contains("--marquee-probe"))
@@ -1880,6 +1886,52 @@ internal static class Diag
             Check("音频设备：无效设备立刻失败（不再走沉睡式校验）", msFail <= 200, $"{msFail:0.0}ms");
         }
 
+        w.WriteLine();
+        return failed;
+    }
+
+    // ==================================================================
+    // --toast-shrink-probe ：通知撑宽岛之后，撤下通知必须回缩（用户报过的 bug）
+    // ==================================================================
+    private static int ToastShrinkProbe(TextWriter w)
+    {
+        w.WriteLine("========== --toast-shrink-probe ==========");
+        w.WriteLine("# 回归：通知把岛撑宽（最多 620）→ 撤下通知后必须回到紧凑宽度。");
+        w.WriteLine("# 曾经的 bug：Retarget 里「目标没变就不重启形变」是跟**上一次形变起点**比，");
+        w.WriteLine("#   而通知撤下时新目标正好等于那个起点 → 判成「没变」→ 岛永远不收窄。");
+        w.WriteLine();
+
+        int failed = 0;
+        void Check(string name, bool ok, string detail = "")
+        {
+            if (ok) w.WriteLine($"PASS  {name}");
+            else { failed++; w.WriteLine($"FAIL  {name}  {detail}"); }
+        }
+
+        var cfg = new AppConfig();
+        using var media = new MediaSessionService();
+        using var island = new Ui.NativeIslandApp(cfg, media);
+        island.Start();
+        Pump(1.5);
+        double baseW = island.IslandWidthForTest;
+        w.WriteLine($"紧凑基准宽度 = {baseW:0}");
+
+        // 通知抢占：注入一条长文本通知 → 岛应展宽
+        island.InjectToast(new ToastData("微信", "这是一条比较长的通知正文，用来把胶囊撑宽一些", "wechat.exe"));
+        island.RetargetForTest();
+        Pump(1.2);
+        double wideW = island.IslandWidthForTest;
+        w.WriteLine($"通知期间宽度 = {wideW:0}");
+        Check("通知撑宽：岛确实变宽了", wideW > baseW + 20, $"{baseW:0} → {wideW:0}");
+
+        // 撤下通知 → 必须回缩到紧凑宽度
+        island.InjectToast(null);
+        island.RetargetForTest();
+        Pump(1.2);
+        double backW = island.IslandWidthForTest;
+        w.WriteLine($"撤下通知后宽度 = {backW:0}");
+        Check("通知撤下：岛回缩到紧凑宽度（这就是报过的 bug）",
+            Math.Abs(backW - baseW) <= 1.0, $"期望 {baseW:0} 实际 {backW:0}");
         w.WriteLine();
         return failed;
     }

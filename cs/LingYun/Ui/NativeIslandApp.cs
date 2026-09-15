@@ -1575,8 +1575,11 @@ public sealed class NativeIslandApp : IDisposable
             "confirm" => (ConfirmW, ConfirmH),
             _ => CompactTarget(),
         };
-        if (Math.Abs(_toW - _fromW) < 0.5 && Math.Abs(_toH - _fromH) < 0.5 && _morphT >= 1)
-            return;   // 目标没变，不重启形变
+        // "目标没变就不重启形变"必须跟**当前尺寸**比，不能跟上一次形变的起点 _fromW 比：
+        // 通知把岛从 240 撑到 620 之后，_fromW 还停在 240；通知撤下时新目标又是 240，
+        // 跟 _fromW 比就判成"没变"→ 直接 return → 岛永远不收窄（用户报的 bug 就是这个）。
+        if (Math.Abs(_toW - _islandW) < 0.5 && Math.Abs(_toH - _islandH) < 0.5 && _morphT >= 1)
+            return;   // 已经在目标尺寸上，不重启形变
         _fromW = _islandW;
         _fromH = _islandH;
         _morphT = 0;
@@ -4743,6 +4746,12 @@ public sealed class NativeIslandApp : IDisposable
 
     /// <summary>诊断用：当前形态（compact / expanded / alert）。**只读字段**，跨线程读也安全。</summary>
     internal string ModeForTest => _mode;
+
+    /// <summary>诊断用：岛体当前宽度（像素），用来验收"通知撤下后有没有回缩"。</summary>
+    internal double IslandWidthForTest => _islandW;
+
+    /// <summary>诊断用：按当前状态重算尺寸并启动形变（通知注入后要手动催一下）。</summary>
+    internal void RetargetForTest() => Post(Retarget);
 
     /// <summary>诊断用：临时摘掉全局鼠标钩子（用来量"有钩子/没钩子"对鼠标延迟的差别）。</summary>
     internal void DisableOutsideClicksForTest() => _outsideClicks.Dispose();
